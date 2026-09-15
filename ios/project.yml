@@ -1,0 +1,58 @@
+name: GoonDrop
+options:
+  bundleIdPrefix: com.goondrop
+  deploymentTarget:
+    iOS: 16.0
+  xcodeVersion: 15.0
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_BITCODE: NO
+
+targets:
+  GoonDrop:
+    type: application
+    platform: iOS
+    sources:
+      - path: GoonDrop
+    info:
+      path: GoonDrop/Info.plist
+    entitlements:
+      path: GoonDrop/GoonDrop.entitlements
+    dependencies:
+      - target: ShareExtension
+    settings:
+      base:
+        PRODUCT_NAME: GoonDrop
+        PRODUCT_BUNDLE_IDENTIFIER: com.goondrop.ios
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: GoonDrop/Info.plist
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: GoonDrop/SharedConfig.swift
+    info:
+      path: ShareExtension/Info.plist
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+    settings:
+      base:
+        PRODUCT_NAME: ShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.goondrop.ios.ShareExtension
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO

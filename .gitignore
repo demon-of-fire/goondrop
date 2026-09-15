@@ -1,0 +1,32 @@
+# Dependencies
+**/node_modules/
+**/dist/
+**/temp/
+**/bin/
+**/obj/
+
+# Windows binaries
+*.exe
+*.dll
+*.pdb
+
+# Logs and environment
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+*.local
+
+# Certificates & keys
+cert.pem
+key.pem
+vapid-keys.json
+clipboard_history.json
+goondrop-port.txt
+
+# Build output
+ios/build/
+*.xcarchive
+*.ipa
+generate-pbxproj.js

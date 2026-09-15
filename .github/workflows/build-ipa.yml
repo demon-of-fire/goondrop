@@ -1,0 +1,72 @@
+name: Build iOS IPA (Main App + Share Extension)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ipa.yml'
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-ipa:
+    name: Compile & Package IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode_16.0.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Archive GoonDrop and ShareExtension
+        run: |
+          cd ios
+          mkdir -p build/ipa/Payload
+          
+          xcodebuild archive \
+            -project GoonDrop.xcodeproj \
+            -scheme GoonDrop \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/GoonDrop.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package Unsigned / Sideload-Ready IPA
+        run: |
+          cd ios
+          echo "==> Packaging into IPA..."
+          cp -r build/GoonDrop.xcarchive/Products/Applications/GoonDrop.app build/ipa/Payload/
+          
+          # Clean any build signatures so sideloading tools (AltStore, SideStore, Sideloadly) sign cleanly
+          rm -rf build/ipa/Payload/GoonDrop.app/_CodeSignature
+          if [ -d "build/ipa/Payload/GoonDrop.app/PlugIns/ShareExtension.appex" ]; then
+            rm -rf build/ipa/Payload/GoonDrop.app/PlugIns/ShareExtension.appex/_CodeSignature
+            echo "==> ShareExtension verified inside GoonDrop.app/PlugIns"
+          else
+            echo "==> Embedding ShareExtension into PlugIns folder..."
+            mkdir -p build/ipa/Payload/GoonDrop.app/PlugIns
+            if [ -d "build/GoonDrop.xcarchive/Products/Applications/ShareExtension.appex" ]; then
+              cp -r build/GoonDrop.xcarchive/Products/Applications/ShareExtension.appex build/ipa/Payload/GoonDrop.app/PlugIns/
+            fi
+          fi
+          
+          cd build/ipa
+          zip -qr ../../GoonDrop.ipa Payload
+          cd ../..
+          ls -lh GoonDrop.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoonDrop-iOS-IPA
+          path: ios/GoonDrop.ipa
+          retention-days: 30

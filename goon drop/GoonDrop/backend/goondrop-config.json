@@ -1,0 +1,75 @@
+{
+  "pairingCode": "87NYC7",
+  "pairedDevices": [
+    {
+      "id": "1779892683546-lu33vsw",
+      "name": "My PC",
+      "deviceType": "windows",
+      "token": "1779892683548-f4z603f",
+      "pairedAt": 1779892683548
+    },
+    {
+      "id": "1779892688339-zhuzmxd",
+      "name": "My PC",
+      "deviceType": "windows",
+      "token": "1779892688341-3v56xm7",
+      "pairedAt": 1784821192165
+    },
+    {
+      "id": "1779892707856-3q9l4hc",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1779892722071-m3b9uv5",
+      "pairedAt": 1779892722071
+    },
+    {
+      "id": "1779892727783-hbbmsq3",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1779892734334-absdpd2",
+      "pairedAt": 1779967167958
+    },
+    {
+      "id": "1779967546119-0cklf4v",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1779967550842-bt526m0",
+      "pairedAt": 1779967550842
+    },
+    {
+      "id": "1780144871890-nj7e7jf",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1780144878800-nrqtd1q",
+      "pairedAt": 1780145194988
+    },
+    {
+      "id": "1780145110382-hjwu141",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1780145117345-jz6vg2q",
+      "pairedAt": 1780145156632
+    },
+    {
+      "id": "1780145349798-75wc0dz",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1780145349817-plsf131",
+      "pairedAt": 1780145349817
+    },
+    {
+      "id": "1781980517908-5orf6c4",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1781980523981-30taxvr",
+      "pairedAt": 1781980523981
+    },
+    {
+      "id": "1784821196002-21ygx0j",
+      "name": "My iPhone",
+      "deviceType": "iphone",
+      "token": "1784821199913-bh3n317",
+      "pairedAt": 1784821199913
+    }
+  ]
+}
