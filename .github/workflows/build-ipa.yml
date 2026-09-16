@@ -26,6 +26,9 @@ jobs:
 
       - name: Regenerate Xcode Project from project.yml
         run: |
+          echo "==> plists before regen =="
+          git status --porcelain ios/GoonDrop/Info.plist ios/ShareExtension/Info.plist || true
+          wc -c ios/GoonDrop/Info.plist ios/ShareExtension/Info.plist
           cd ios
           if command -v xcodegen >/dev/null 2>&1; then
             xcodegen generate --spec project.yml
@@ -35,6 +38,8 @@ jobs:
           else
             echo "xcodegen not available; using committed .xcodeproj"
           fi
+          echo "==> plists after regen =="
+          wc -c GoonDrop/Info.plist ShareExtension/Info.plist
           # XcodeGen 2.45+ defaults to the Xcode 16 format (objectVersion 77),
           # which the Xcode 15.4 runner cannot open. project.yml pins
           # projectFormat: xcode14_0 (objectVersion 56) — verify it stuck.
@@ -78,13 +83,12 @@ jobs:
             fi
           fi
           
-          # Xcode's builtin-infoPlistUtility drops author-written keys
-          # (NSExtension, ATS, usage descriptions) from archived Info.plists.
-          # Merge them back in deterministically so the shipped bundles are
-          # valid app bundles + app extensions.
+          # XcodeGen re-created the Info.plists as 8-key defaults; merge the
+          # canonical authored keys back in deterministically so the shipped
+          # bundles are valid app bundles + app extensions regardless.
           python3 fixup_plists.py \
-            build/ipa/Payload/GoonDrop.app/Info.plist GoonDrop/Info.plist \
-            build/ipa/Payload/GoonDrop.app/PlugIns/ShareExtension.appex/Info.plist ShareExtension/Info.plist
+            build/ipa/Payload/GoonDrop.app/Info.plist app \
+            build/ipa/Payload/GoonDrop.app/PlugIns/ShareExtension.appex/Info.plist appex
           
           cd build/ipa
           zip -qr ../../GoonDrop.ipa Payload
