@@ -35,6 +35,13 @@ jobs:
           else
             echo "xcodegen not available; using committed .xcodeproj"
           fi
+          # XcodeGen 2.45+ defaults to the Xcode 16 format (objectVersion 77),
+          # which the Xcode 15.4 runner cannot open. project.yml pins
+          # projectFormat: xcode14_0 (objectVersion 56) — verify it stuck.
+          if grep -q 'objectVersion = 77' GoonDrop.xcodeproj/project.pbxproj; then
+            echo "::error::xcodegen wrote objectVersion 77; pin options.projectFormat older than xcode16_0 in project.yml"
+            exit 1
+          fi
 
       - name: Archive GoonDrop and ShareExtension
         run: |

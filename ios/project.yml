@@ -4,7 +4,7 @@ options:
   deploymentTarget:
     iOS: 16.0
   xcodeVersion: 15.0
-  objectVersion: 46
+  projectFormat: xcode14_0
 
 settings:
   base:
