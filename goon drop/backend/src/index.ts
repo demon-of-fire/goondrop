@@ -432,17 +432,27 @@ async function main(): Promise<void> {
 
    // 📡 Wi-Fi UDP Broadcast Auto-Discovery Beacon (Zero-QR Pairing!)
    const udpServer = dgram.createSocket('udp4');
-   udpServer.bind(() => {
+   // MUST bind to UDP 3943 (not an ephemeral port): the iOS app broadcasts
+   // `goondrop_discover` to 255.255.255.255:3943 and waits for a unicast reply.
+   // Binding a random port meant no socket was ever listening on 3943, so the
+   // PC silently never heard the phones (and the periodic beacon to 3943 was
+   // sent into the void). See LANDiscovery.swift on the iOS side.
+   udpServer.bind(3943, () => {
      try {
        udpServer.setBroadcast(true);
      } catch { }
    });
+   udpServer.on('error', (err: any) => {
+     console.error(`[UDP] Discovery bind on 3943 failed: ${err?.message ?? err}`);
+   });
 
-   // 🛡️ ROUTER-RESILIENT HANDSHAKE: Listen to direct discovery pings from phones and reply via unicast!
+// 🛡️ ROUTER-RESILIENT HANDSHAKE: Listen to direct discovery pings from phones and reply via unicast!
    // This completely bypasses Google Nest / Mesh router multicast blocks!
    udpServer.on('message', (msg, rinfo) => {
      try {
-       if (msg.toString() === 'goondrop_discover') {
+       const text = msg.toString();
+       console.log(`[UDP-DISCOVERY] Received ${msg.length} bytes from ${rinfo.address}:${rinfo.port}: ${text}`);
+       if (text === 'goondrop_discover') {
          const reply = Buffer.from(JSON.stringify({
            ip: config.localIp,
            port: config.port + 1,
