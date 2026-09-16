@@ -352,7 +352,6 @@ class ShareViewController: UIViewController {
             
             let session = SharedConfig.makeLANSession()
             session.dataTask(with: request) { (data, response, error) in
-                guard let self = self else { return }
                 if let error = error {
                     self.finishWithError("Transfer failed: \(error.localizedDescription)")
                     return
@@ -394,7 +393,6 @@ class ShareViewController: UIViewController {
             
             let session = SharedConfig.makeLANSession()
             session.dataTask(with: request) { (data, response, error) in
-                guard let self = self else { return }
                 if let error = error {
                     self.finishWithError("Transfer failed: \(error.localizedDescription)")
                     return
@@ -439,7 +437,6 @@ class ShareViewController: UIViewController {
             
             let session = SharedConfig.makeLANSession()
             let task = session.uploadTask(with: request, from: body) { (data, response, error) in
-                guard let self = self else { return }
                 if let error = error {
                     self.finishWithError("Drop failed: \(error.localizedDescription)")
                     return
