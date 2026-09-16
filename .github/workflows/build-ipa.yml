@@ -24,6 +24,18 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode_16.0.app || sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
 
+      - name: Regenerate Xcode Project from project.yml
+        run: |
+          cd ios
+          if command -v xcodegen >/dev/null 2>&1; then
+            xcodegen generate --spec project.yml
+          elif command -v brew >/dev/null 2>&1; then
+            brew install xcodegen
+            xcodegen generate --spec project.yml
+          else
+            echo "xcodegen not available; using committed .xcodeproj"
+          fi
+
       - name: Archive GoonDrop and ShareExtension
         run: |
           cd ios

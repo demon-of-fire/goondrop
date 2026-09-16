@@ -1,23 +1,66 @@
-# Goon Drop for iOS (SwiftUI + Share Sheet Extension)
+# Goon Drop for iOS (Native SwiftUI + Share Sheet Extension)
 
-Native iOS client and AirDrop-like Share Sheet extension for Goon Drop.
+Native iOS client and AirDrop-like Share Sheet extension for Goon Drop — a fully
+local, zero-cloud continuity ecosystem between your Windows PC and iPhone.
 
-## Features
-- **Native iOS Share Sheet Extension** (Only 1 extension to ensure AltStore/SideStore compatibility):
-  - Share Photos, Videos, Documents, PDFs directly from any app (Photos, Files) to your Windows PC `Downloads\GoonDrop`.
-  - Share URLs from Safari, Chrome, YouTube directly to your PC browser (`/api/handoff`).
-  - Share copied text to your PC clipboard (`/api/clipboard`).
-- **Main App**:
-  - Embedded Goon Drop Continuity dashboard.
-  - PC server IP configuration and connection health check.
-  - Quick action buttons for sending photos, files, and clipboard sync.
-- **LAN Trust**:
-  - Built-in support for Goon Drop's local self-signed SSL certificates.
+## Your 2 App IDs (all you need)
 
-## Sideloading via AltStore / SideStore / TrollStore / Sideloadly
-1. Download `GoonDrop.ipa`.
-2. Open AltStore / SideStore / Sideloadly on your device or computer.
-3. Select `GoonDrop.ipa`.
-4. AltStore will sign both `GoonDrop` and `ShareExtension` (2 App IDs total, within the 3-App-ID free account limit).
-5. Open Goon Drop on your iPhone, enter your PC's Wi-Fi IP address (shown in the Windows launcher, e.g. `192.168.1.50:3942`), and tap Save.
-6. Now go to Photos or Safari, tap Share, and select **Goon Drop**!
+| Bundle ID                       | Type            |
+|---------------------------------|-----------------|
+| `com.goondrop.ios`              | Main app        |
+| `com.goondrop.ios.ShareExtension` | Share extension |
+
+`group.com.goondrop.app` is an App Group (an entitlement), **not** an App ID, so it
+costs nothing. Keep the linked App Group enabled on both targets in the Apple
+Developer portal. Any other App IDs listed under "5 used" are leftovers from old
+experiments — delete them at developer.apple.com/account/resources/identifiers.
+
+## Main App (native, no WebView)
+
+Built with SwiftUI — no web view wrapper. Four tabs:
+
+- **Devices** — taps **"Scan Wi-Fi Network"** to find your PC automatically. The PC
+  broadcasts itself on UDP port 3943; tap the found PC and it connects + pairs in
+  one step. No website, no QR code, no typing IPs. Shows the live device list and
+  pairing code once connected.
+- **Send** — drop photos, files, clipboard text, and links straight onto the PC.
+- **Clipboard** — real-time shared clipboard history; tap an item to copy it.
+- **Handoff** — links relayed from your PC browser; tap to open on your iPhone,
+  or push a URL back to the PC.
+
+### How discovery + pairing works
+
+1. The app broadcasts `goondrop_discover` on UDP 3943.
+2. The PC backend replies `{ ip, port, pairingCode, serverName }`.
+3. The app connects over `wss://` (trusts the PC's local self-signed certificate)
+   and pairs automatically with the returned pairing code.
+
+Manual fallback: Settings → Manual server.
+
+## Share Sheet Extension (1 extension)
+
+From **any** app's share sheet, choose **Goon Drop**:
+
+- Photos / videos / documents / PDFs → dropped onto the PC
+  (`Downloads\GoonDrop` on the PC).
+- URLs → opened in the PC's browser (`/api/handoff`).
+- Copied text → written to the PC clipboard (`/api/clipboard`).
+
+Share settings are stored in the shared App Group, so picking a PC in the app
+automatically points the share sheet at the same PC.
+
+## Sideloading via AltStore / SideStore / Sideloadly
+
+1. Download `GoonDrop.ipa` from the latest GitHub Actions build.
+2. Open AltStore / SideStore / Sideloadly and sign `GoonDrop.ipa`.
+3. AltStore signs both `GoonDrop` and `ShareExtension` — **2 App IDs total**, well
+   within the free 3-App-ID account limit.
+4. Open Goon Drop, tap **Scan Wi-Fi**, and connect to your PC. Then share anything
+   from Photos, Safari, or Files via the Goon Drop share sheet.
+
+## Building
+
+The GitHub Actions workflow (`build-ipa.yml`) regenerates the Xcode project with
+[xcodegen](https://github.com/yonaskolb/XcodeGen) from `project.yml`, archives both
+targets, and uploads an unsigned, sideload-ready IPA. Trigger it with "Run
+workflow" on GitHub, and the IPA appears in the workflow's artifacts.

@@ -221,20 +221,6 @@ public partial class Form1 : Form
             AccessibleDescription = "Displays the current pairing code for connecting devices",
             TabStop = false
         };
-        lblUrl.MouseDown += Widget_MouseDown;
-        lblUrl.MouseMove += Widget_MouseMove;
-        lblUrl.MouseUp += Widget_MouseUp;
-
-        // Pairing code
-        lblPairing = new Label
-        {
-            Text = "Pairing Code: ---",
-            Location = new Point(20, 108),
-            Size = new Size(560, 20),
-            ForeColor = Color.FromArgb(200, 200, 200),
-            AccessibleName = "Pairing Code",
-            AccessibleDescription = "Displays the current pairing code for connecting devices"
-        };
         lblPairing.MouseDown += Widget_MouseDown;
         lblPairing.MouseMove += Widget_MouseMove;
         lblPairing.MouseUp += Widget_MouseUp;
@@ -886,8 +872,8 @@ public partial class Form1 : Form
         btnStop.BackColor = running ? Color.FromArgb(220, 50, 50) : Color.FromArgb(60, 60, 60);
         btnStop.ForeColor = running ? Color.White : Color.Gray;
 
-        menuStart.Enabled = !running;
-        menuStop.Enabled = running;
+        if (menuStart != null) menuStart.Enabled = !running;
+        if (menuStop != null) menuStop.Enabled = running;
 
         lblStatus.Text = running ? "Status: Running" : "Status: Stopped";
         lblStatus.ForeColor = running ? Color.FromArgb(0, 229, 160) : Color.FromArgb(255, 92, 92);
@@ -1653,35 +1639,52 @@ public partial class Form1 : Form
                     resp.StatusCode = 200;
                     resp.Close();
                 }
-            } catch { }
+            }
+            catch (Exception ex)
+            {
+                // Log listener bind/loop failures instead of swallowing them silently.
+                // A second launcher instance (or a leftover process) holding port 3945
+                // used to crash silently at startup here.
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    try { Invoke(() => Log($"Local control listener stopped: {ex.Message}")); } catch { }
+                }
+            }
         });
     }
 
-    // Zero-latency native UDP Mouse and Click Receiver on port 3944! (Omega latency bypass)
-    private System.Net.Sockets.UdpClient? udpMouseListener;
+// Zero-latency native UDP Mouse and Click Receiver on port 3944! (Omega latency bypass)
+      private System.Net.Sockets.UdpClient? udpMouseListener;
 
-    private void StartUdpMouseListener()
-    {
-      Task.Run(() => {
-        try {
-          udpMouseListener = new System.Net.Sockets.UdpClient(3944);
-          IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-          while (true) {
-            byte[] data = udpMouseListener.Receive(ref remoteEP);
-            string json = Encoding.UTF8.GetString(data);
-            try {
-              var packet = JsonSerializer.Deserialize<ControlPacket>(json);
-              if (packet != null) {
-                Invoke(() => {
-                  if (packet.type == "mouse_move") MoveMouse(packet.dx, packet.dy);
-                  else if (packet.type == "mouse_click") ClickMouse(packet.clickType);
-                });
-              }
-            } catch { }
+      private void StartUdpMouseListener()
+      {
+        Task.Run(() => {
+          try {
+            udpMouseListener = new System.Net.Sockets.UdpClient(3944);
+            IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
+            while (true) {
+              byte[] data = udpMouseListener.Receive(ref remoteEP);
+              string json = Encoding.UTF8.GetString(data);
+              try {
+                var packet = JsonSerializer.Deserialize<ControlPacket>(json);
+                if (packet != null) {
+                  Invoke(() => {
+                    if (packet.type == "mouse_move") MoveMouse(packet.dx, packet.dy);
+                    else if (packet.type == "mouse_click") ClickMouse(packet.clickType);
+                  });
+                }
+              } catch { }
+            }
           }
-        } catch { }
-      });
-    }
+          catch (Exception ex)
+          {
+            if (this.IsHandleCreated && !this.IsDisposed)
+            {
+              try { Invoke(() => Log($"UDP mouse listener unavailable: {ex.Message}")); } catch { }
+            }
+          }
+        });
+      }
 
     private void StartClipboardPolling()
     {

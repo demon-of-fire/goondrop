@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Centralized configuration shared between the main Goon Drop app and the Share Sheet extension.
 /// Uses App Groups (`group.com.goondrop.app`) so preferences set in the app are immediately
@@ -17,6 +18,8 @@ public class SharedConfig: ObservableObject {
     private let keyUseHttps   = "goondrop_use_https"
     private let keyPairingCode = "goondrop_pairing_code"
     private let keyAutoSend    = "goondrop_auto_send"
+    private let keyServerName  = "goondrop_server_name"
+    private let keyConfigured  = "goondrop_configured"
     
     @Published public var serverHost: String {
         didSet {
@@ -47,6 +50,20 @@ public class SharedConfig: ObservableObject {
             defaults.set(autoSend, forKey: keyAutoSend)
         }
     }
+
+    @Published public var serverName: String {
+        didSet {
+            defaults.set(serverName, forKey: keyServerName)
+        }
+    }
+
+    /// True once the user has picked a server (via Wi-Fi discovery or manual entry).
+    /// Until then the app shows the discovery screen instead of trying a placeholder IP.
+    @Published public var isConfigured: Bool {
+        didSet {
+            defaults.set(isConfigured, forKey: keyConfigured)
+        }
+    }
     
     private init() {
         let defs = UserDefaults(suiteName: SharedConfig.appGroupName) ?? UserDefaults.standard
@@ -55,17 +72,26 @@ public class SharedConfig: ObservableObject {
         let https = defs.object(forKey: keyUseHttps) as? Bool ?? true
         let code = defs.string(forKey: keyPairingCode) ?? ""
         let auto = defs.object(forKey: keyAutoSend) as? Bool ?? true
+        let name = defs.string(forKey: keyServerName) ?? ""
+        let configured = defs.object(forKey: keyConfigured) as? Bool ?? false
         
         self.serverHost = host
         self.serverPort = port > 0 ? port : 3942
         self.useHttps = https
         self.pairingCode = code
         self.autoSend = auto
+        self.serverName = name
+        self.isConfigured = configured
     }
     
     public var baseURLString: String {
         let scheme = useHttps ? "https" : "http"
         return "\(scheme)://\(serverHost):\(serverPort)"
+    }
+
+    public var wsURL: URL? {
+        let scheme = useHttps ? "wss" : "ws"
+        return URL(string: "\(scheme)://\(serverHost):\(serverPort)/")
     }
     
     public var apiDropURL: URL? {

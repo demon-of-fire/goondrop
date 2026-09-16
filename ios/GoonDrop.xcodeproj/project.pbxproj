@@ -9,8 +9,16 @@
 /* Begin PBXBuildFile section */
 		300000000000000000000001 /* GoonDropApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* GoonDropApp.swift */; };
 		300000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* ContentView.swift */; };
-		300000000000000000000003 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* WebViewContainer.swift */; };
 		300000000000000000000004 /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* SharedConfig.swift */; };
+		300000000000000000000020 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* Models.swift */; };
+		300000000000000000000021 /* LANDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* LANDiscovery.swift */; };
+		300000000000000000000022 /* GoonDropClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* GoonDropClient.swift */; };
+		300000000000000000000023 /* GoonFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* GoonFormat.swift */; };
+		300000000000000000000024 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* DevicesView.swift */; };
+		300000000000000000000025 /* SendView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* SendView.swift */; };
+		300000000000000000000026 /* ClipboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* ClipboardView.swift */; };
+		300000000000000000000027 /* HandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* HandoffView.swift */; };
+		300000000000000000000028 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* SettingsView.swift */; };
 		300000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* Assets.xcassets */; };
 		300000000000000000000011 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* ShareViewController.swift */; };
 		300000000000000000000014 /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* SharedConfig.swift */; };
@@ -44,8 +52,16 @@
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* GoonDropApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoonDropApp.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		200000000000000000000003 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
 		200000000000000000000004 /* SharedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConfig.swift; sourceTree = "<group>"; };
+		200000000000000000000020 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		200000000000000000000021 /* LANDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANDiscovery.swift; sourceTree = "<group>"; };
+		200000000000000000000022 /* GoonDropClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoonDropClient.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* GoonFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoonFormat.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
+		200000000000000000000025 /* SendView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendView.swift; sourceTree = "<group>"; };
+		200000000000000000000026 /* ClipboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardView.swift; sourceTree = "<group>"; };
+		200000000000000000000027 /* HandoffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandoffView.swift; sourceTree = "<group>"; };
+		200000000000000000000028 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		200000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		200000000000000000000006 /* GoonDrop.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GoonDrop.entitlements; sourceTree = "<group>"; };
 		200000000000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -97,13 +113,29 @@
 			children = (
 				200000000000000000000001 /* GoonDropApp.swift */,
 				200000000000000000000002 /* ContentView.swift */,
-				200000000000000000000003 /* WebViewContainer.swift */,
 				200000000000000000000004 /* SharedConfig.swift */,
+				200000000000000000000020 /* Models.swift */,
+				200000000000000000000021 /* LANDiscovery.swift */,
+				200000000000000000000022 /* GoonDropClient.swift */,
+				200000000000000000000023 /* GoonFormat.swift */,
+				100000000000000000000006 /* Views */,
 				200000000000000000000007 /* Assets.xcassets */,
 				200000000000000000000005 /* Info.plist */,
 				200000000000000000000006 /* GoonDrop.entitlements */,
 			);
 			path = GoonDrop;
+			sourceTree = "<group>";
+		};
+		100000000000000000000006 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000024 /* DevicesView.swift */,
+				200000000000000000000025 /* SendView.swift */,
+				200000000000000000000026 /* ClipboardView.swift */,
+				200000000000000000000027 /* HandoffView.swift */,
+				200000000000000000000028 /* SettingsView.swift */,
+			);
+			path = Views;
 			sourceTree = "<group>";
 		};
 		100000000000000000000005 /* ShareExtension */ = {
@@ -217,8 +249,16 @@
 			files = (
 				300000000000000000000001 /* GoonDropApp.swift in Sources */,
 				300000000000000000000002 /* ContentView.swift in Sources */,
-				300000000000000000000003 /* WebViewContainer.swift in Sources */,
 				300000000000000000000004 /* SharedConfig.swift in Sources */,
+				300000000000000000000020 /* Models.swift in Sources */,
+				300000000000000000000021 /* LANDiscovery.swift in Sources */,
+				300000000000000000000022 /* GoonDropClient.swift in Sources */,
+				300000000000000000000023 /* GoonFormat.swift in Sources */,
+				300000000000000000000024 /* DevicesView.swift in Sources */,
+				300000000000000000000025 /* SendView.swift in Sources */,
+				300000000000000000000026 /* ClipboardView.swift in Sources */,
+				300000000000000000000027 /* HandoffView.swift in Sources */,
+				300000000000000000000028 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -6,6 +6,12 @@ echo "==> Building Goon Drop iOS App and Share Extension..."
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+# Regenerate .xcodeproj from project.yml so new Swift files are always picked up
+if command -v xcodegen >/dev/null 2>&1; then
+  echo "==> Regenerating Xcode project via xcodegen..."
+  xcodegen generate --spec project.yml
+fi
+
 ARCHIVE_PATH="$PROJECT_DIR/build/GoonDrop.xcarchive"
 IPA_DIR="$PROJECT_DIR/build/ipa"
 PAYLOAD_DIR="$IPA_DIR/Payload"
