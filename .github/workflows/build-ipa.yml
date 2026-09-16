@@ -83,28 +83,10 @@ jobs:
           cd ../..
           ls -lh GoonDrop.ipa
 
-      - name: Package Extension-Free Sideload IPA
-        run: |
-          cd ios
-          # Free Apple IDs / SideStore cannot register embedded app extensions
-          # ("App Contains Extensions" / placeholder bundle ID mismatch) or
-          # provision App Groups. The main app falls back to standard
-          # UserDefaults without the extension, so this build is fully usable.
-          rm -rf build/ipa-noext
-          mkdir -p build/ipa-noext/Payload
-          cp -r build/GoonDrop.xcarchive/Products/Applications/GoonDrop.app build/ipa-noext/Payload/
-          rm -rf build/ipa-noext/Payload/GoonDrop.app/PlugIns
-          rm -rf build/ipa-noext/Payload/GoonDrop.app/_CodeSignature
-          cd build/ipa-noext
-          zip -qr ../../GoonDrop-NoExtension.ipa Payload
-          cd ../..
-          ls -lh GoonDrop.ipa GoonDrop-NoExtension.ipa
-
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: GoonDrop-iOS-IPA
           path: |
             ios/GoonDrop.ipa
-            ios/GoonDrop-NoExtension.ipa
           retention-days: 30

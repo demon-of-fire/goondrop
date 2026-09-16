@@ -10,10 +10,10 @@ local, zero-cloud continuity ecosystem between your Windows PC and iPhone.
 | `com.goondrop.ios`              | Main app        |
 | `com.goondrop.ios.ShareExtension` | Share extension |
 
-`group.com.goondrop.app` is an App Group (an entitlement), **not** an App ID, so it
-costs nothing. Keep the linked App Group enabled on both targets in the Apple
-Developer portal. Any other App IDs listed under "5 used" are leftovers from old
-experiments — delete them at developer.apple.com/account/resources/identifiers.
+No App Group (or any other capability) is used, specifically so the app signs and
+installs cleanly on free Apple IDs via SideStore / AltStore — app groups cannot be
+provisioned on free accounts. Any other App IDs listed under "used" are leftovers
+from old experiments — delete them at developer.apple.com/account/resources/identifiers.
 
 ## Main App (native, no WebView)
 
@@ -46,15 +46,18 @@ From **any** app's share sheet, choose **Goon Drop**:
 - URLs → opened in the PC's browser (`/api/handoff`).
 - Copied text → written to the PC clipboard (`/api/clipboard`).
 
-Share settings are stored in the shared App Group, so picking a PC in the app
-automatically points the share sheet at the same PC.
+Share settings live in a shared App Group when you build from Xcode, so picking a
+PC in the app points the share sheet at it automatically. On a free-account
+sideload (no App Group), the extension simply **discovers your PC itself** via the
+UDP broadcast whenever you share — no prior pairing needed.
 
 ## Sideloading via AltStore / SideStore / Sideloadly
 
 1. Download `GoonDrop.ipa` from the latest GitHub Actions build.
 2. Open AltStore / SideStore / Sideloadly and sign `GoonDrop.ipa`.
-3. AltStore signs both `GoonDrop` and `ShareExtension` — **2 App IDs total**, well
-   within the free 3-App-ID account limit.
+3. AltStore / SideStore / Sideloadly sign both `GoonDrop` and `ShareExtension`.
+   When SideStore pops **"App Contains Extensions"**, choose **"Keep App
+   Extensions"** — this keeps the share sheet instead of stripping it.
 4. Open Goon Drop, tap **Scan Wi-Fi**, and connect to your PC. Then share anything
    from Photos, Safari, or Files via the Goon Drop share sheet.
 

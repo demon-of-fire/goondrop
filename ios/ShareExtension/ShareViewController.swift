@@ -55,7 +55,7 @@ class ShareViewController: UIViewController {
         
         // Subtitle (Target PC)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "PC: \(config.serverHost):\(config.serverPort)"
+        subtitleLabel.text = targetSummary()
         subtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.textAlignment = .center
@@ -289,113 +289,168 @@ class ShareViewController: UIViewController {
     }
     
     // MARK: - Networking
-    
-    private func sendURL(_ url: URL) {
-        guard let endpoint = config.apiHandoffURL else {
-            finishWithError("Invalid server URL: \(config.baseURLString)")
+
+    private struct TargetServer {
+        let host: String
+        let port: Int
+        let pairingCode: String
+    }
+
+    /// Where to send the item. Prefers the saved config (App Group, when signed
+    /// with one) and falls back to live UDP discovery so the share sheet works
+    /// even when sideloaded without an App Group (free Apple ID / SideStore).
+    private func resolveTargetAsync(completion: @escaping (TargetServer?) -> Void) {
+        if config.isConfigured && !config.serverHost.isEmpty && config.serverHost != "192.168.1.100" {
+            completion(TargetServer(host: config.serverHost, port: config.serverPort, pairingCode: config.pairingCode))
             return
         }
-        
+        DispatchQueue.global(qos: .userInitiated).async {
+            let server = LANDiscovery.discover(timeout: 1.5).first
+            DispatchQueue.main.async {
+                completion(server.map { TargetServer(host: $0.ip, port: $0.port, pairingCode: $0.pairingCode) })
+            }
+        }
+    }
+
+    private func targetSummary() -> String {
+        if config.isConfigured && !config.serverHost.isEmpty && config.serverHost != "192.168.1.100" {
+            return "PC: \(config.serverHost):\(config.serverPort)"
+        }
+        return "Searching for your PC..."
+    }
+
+    private func endpoint(_ target: TargetServer, _ path: String) -> URL? {
+        let scheme = config.useHttps ? "https" : "http"
+        return URL(string: "\(scheme)://\(target.host):\(target.port)\(path)")
+    }
+
+    private func sendURL(_ url: URL) {
         DispatchQueue.main.async {
-            self.statusLabel.text = "Handoff to PC..."
+            self.statusLabel.text = "Searching for your PC..."
         }
-        
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.pairingCode.isEmpty {
-            request.setValue(config.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-        }
-        
-        let payload = ["url": url.absoluteString]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
-        let session = SharedConfig.makeLANSession()
-        session.dataTask(with: request) { [weak self] (data, response, error) in
+        resolveTargetAsync { [weak self] target in
             guard let self = self else { return }
-            if let error = error {
-                self.finishWithError("Transfer failed: \(error.localizedDescription)")
+            guard let target = target, let endpoint = self.endpoint(target, "/api/handoff") else {
+                self.finishWithError("No Goon Drop PC found")
                 return
             }
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                self.finishSuccessfully()
-            } else {
-                self.finishWithError("PC rejected request")
+            
+            DispatchQueue.main.async {
+                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
+                self.statusLabel.text = "Handoff to PC..."
             }
-        }.resume()
+            
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if !target.pairingCode.isEmpty {
+                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
+            }
+            
+            let payload = ["url": url.absoluteString]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            
+            let session = SharedConfig.makeLANSession()
+            session.dataTask(with: request) { (data, response, error) in
+                guard let self = self else { return }
+                if let error = error {
+                    self.finishWithError("Transfer failed: \(error.localizedDescription)")
+                    return
+                }
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    self.finishSuccessfully()
+                } else {
+                    self.finishWithError("PC rejected request")
+                }
+            }.resume()
+        }
     }
     
     private func sendClipboardText(_ text: String) {
-        guard let endpoint = config.apiClipboardURL else {
-            finishWithError("Invalid server URL")
-            return
-        }
-        
         DispatchQueue.main.async {
-            self.statusLabel.text = "Copying to PC clipboard..."
+            self.statusLabel.text = "Searching for your PC..."
         }
-        
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.pairingCode.isEmpty {
-            request.setValue(config.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-        }
-        
-        let payload = ["text": text]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
-        let session = SharedConfig.makeLANSession()
-        session.dataTask(with: request) { [weak self] (data, response, error) in
+        resolveTargetAsync { [weak self] target in
             guard let self = self else { return }
-            if let error = error {
-                self.finishWithError("Transfer failed: \(error.localizedDescription)")
+            guard let target = target, let endpoint = self.endpoint(target, "/api/clipboard") else {
+                self.finishWithError("No Goon Drop PC found")
                 return
             }
-            self.finishSuccessfully()
-        }.resume()
+            
+            DispatchQueue.main.async {
+                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
+                self.statusLabel.text = "Copying to PC clipboard..."
+            }
+            
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if !target.pairingCode.isEmpty {
+                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
+            }
+            
+            let payload = ["text": text]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            
+            let session = SharedConfig.makeLANSession()
+            session.dataTask(with: request) { (data, response, error) in
+                guard let self = self else { return }
+                if let error = error {
+                    self.finishWithError("Transfer failed: \(error.localizedDescription)")
+                    return
+                }
+                self.finishSuccessfully()
+            }.resume()
+        }
     }
     
     private func uploadFile(data: Data, fileName: String, mimeType: String) {
-        guard let endpoint = config.apiDropURL else {
-            finishWithError("Invalid server URL: \(config.baseURLString)")
-            return
-        }
-        
         DispatchQueue.main.async {
-            self.statusLabel.text = "Dropping to PC: \(fileName)"
-            self.progressView.isHidden = false
-            self.progressView.progress = 0.2
+            self.statusLabel.text = "Searching for your PC..."
         }
-        
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        if !config.pairingCode.isEmpty {
-            request.setValue(config.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-        }
-        
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
-        body.append(data)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        
-        let session = SharedConfig.makeLANSession()
-        let task = session.uploadTask(with: request, from: body) { [weak self] (data, response, error) in
+        resolveTargetAsync { [weak self] target in
             guard let self = self else { return }
-            if let error = error {
-                self.finishWithError("Drop failed: \(error.localizedDescription)")
+            guard let target = target, let endpoint = self.endpoint(target, "/api/drop") else {
+                self.finishWithError("No Goon Drop PC found")
                 return
             }
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                self.finishSuccessfully()
-            } else {
-                self.finishWithError("PC server error (\((response as? HTTPURLResponse)?.statusCode ?? 0))")
+            
+            DispatchQueue.main.async {
+                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
+                self.statusLabel.text = "Dropping to PC: \(fileName)"
+                self.progressView.isHidden = false
+                self.progressView.progress = 0.2
             }
+            
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            if !target.pairingCode.isEmpty {
+                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
+            }
+            
+            var body = Data()
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
+            body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+            body.append(data)
+            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+            
+            let session = SharedConfig.makeLANSession()
+            let task = session.uploadTask(with: request, from: body) { (data, response, error) in
+                guard let self = self else { return }
+                if let error = error {
+                    self.finishWithError("Drop failed: \(error.localizedDescription)")
+                    return
+                }
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    self.finishSuccessfully()
+                } else {
+                    self.finishWithError("PC server error (\((response as? HTTPURLResponse)?.statusCode ?? 0))")
+                }
+            }
+            task.resume()
         }
-        task.resume()
     }
 }
