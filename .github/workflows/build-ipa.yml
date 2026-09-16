@@ -78,6 +78,14 @@ jobs:
             fi
           fi
           
+          # Xcode's builtin-infoPlistUtility drops author-written keys
+          # (NSExtension, ATS, usage descriptions) from archived Info.plists.
+          # Merge them back in deterministically so the shipped bundles are
+          # valid app bundles + app extensions.
+          python3 fixup_plists.py \
+            build/ipa/Payload/GoonDrop.app/Info.plist GoonDrop/Info.plist \
+            build/ipa/Payload/GoonDrop.app/PlugIns/ShareExtension.appex/Info.plist ShareExtension/Info.plist
+          
           cd build/ipa
           zip -qr ../../GoonDrop.ipa Payload
           cd ../..
