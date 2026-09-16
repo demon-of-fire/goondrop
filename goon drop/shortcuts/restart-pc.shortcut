@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>WFWorkflowClientVersion</key>
+  <string>1320.8.12</string>
+  <key>WFWorkflowClientRelease</key>
+  <string>3.2.1</string>
+  <key>WFWorkflowMinimumClientVersion</key>
+  <integer>900</integer>
+  <key>WFWorkflowMinimumClientVersionString</key>
+  <string>900</string>
+  <key>WFWorkflowIcon</key>
+  <dict>
+    <key>WFWorkflowIconStartColor</key>
+    <integer>4282601983</integer>
+    <key>WFWorkflowIconGlyphNumber</key>
+    <integer>59510</integer>
+  </dict>
+  <key>WFWorkflowImportQuestionsDisable</key>
+  <true/>
+  <key>WFWorkflowHasShortcutInputVariables</key>
+  <false/>
+  <key>WFWorkflowHasOutputFallback</key>
+  <false/>
+  <key>WFWorkflowInputContentItemClasses</key>
+  <array>
+    <string>WFURLContentItem</string>
+  </array>
+  <key>WFWorkflowInputContentCardinality</key>
+  <integer>1</integer>
+  <key>WFWorkflowNoInputParameters</key>
+  <true/>
+  <key>WFWorkflowActions</key>
+  <array>
+      <dict>
+        <key>WFWorkflowActionIdentifier</key>
+        <string>is.workflow.actions.url</string>
+        <key>WFWorkflowActionParameters</key>
+        <dict>
+        <dict>
+          <key>WFParameterKey</key>
+          <string>WFURLActionURL</string>
+          <key>WFParameterValue</key>
+          <string>http://192.168.0.82:3941/api/system/restart?code=H5LH5L</string>
+        </dict>
+        </dict>
+      </dict>
+      <dict>
+        <key>WFWorkflowActionIdentifier</key>
+        <string>is.workflow.actions.downloadurl</string>
+        <key>WFWorkflowActionParameters</key>
+        <dict>
+
+        </dict>
+      </dict>
+      <dict>
+        <key>WFWorkflowActionIdentifier</key>
+        <string>is.workflow.actions.notification</string>
+        <key>WFWorkflowActionParameters</key>
+        <dict>
+        <dict>
+          <key>WFParameterKey</key>
+          <string>WFNotificationActionTitle</string>
+          <key>WFParameterValue</key>
+          <string>Restart PC</string>
+        </dict>
+        <dict>
+          <key>WFParameterKey</key>
+          <string>WFNotificationActionBody</string>
+          <key>WFParameterValue</key>
+          <string>PC restarting! 🔄</string>
+        </dict>
+        </dict>
+      </dict>
+  </array>
+  <key>WFWorkflowTypes</key>
+  <array>
+    <string>NCWidget</string>
+    <string>WatchKit</string>
+    <string>ActionExtension</string>
+  </array>
+</dict>
+</plist>
