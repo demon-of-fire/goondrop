@@ -19,8 +19,6 @@ targets:
     platform: iOS
     sources:
       - path: GoonDrop
-    info:
-      path: GoonDrop/Info.plist
     entitlements:
       path: GoonDrop/GoonDrop.entitlements
     dependencies:
@@ -45,8 +43,6 @@ targets:
       - path: GoonDrop/SharedConfig.swift
       - path: GoonDrop/Models.swift
       - path: GoonDrop/LANDiscovery.swift
-    info:
-      path: ShareExtension/Info.plist
     entitlements:
       path: ShareExtension/ShareExtension.entitlements
     settings:
