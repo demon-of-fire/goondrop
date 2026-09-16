@@ -24,9 +24,8 @@ static class Program
                 int activePort = 3941;
                 try
                 {
-                    string rootPath = AppDomain.CurrentDomain.BaseDirectory;
-                    string portFile = System.IO.Path.Combine(rootPath, "goondrop-port.txt");
-                    if (System.IO.File.Exists(portFile))
+                    string? portFile = FindPortFile();
+                    if (portFile != null && System.IO.File.Exists(portFile))
                     {
                         activePort = int.Parse(System.IO.File.ReadAllText(portFile).Trim());
                     }
@@ -49,10 +48,35 @@ static class Program
             {
                 MessageBox.Show("Could not connect to Goon Drop. Please ensure the Goon Drop server is running in your system tray.\n\nError: " + ex.Message, "Goon Drop Not Running", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-            return; // Exit immediately, do not start a new server instance
+return; // Exit immediately, do not start a new server instance
         }
 
         ApplicationConfiguration.Initialize();
         Application.Run(new Form1());
-    }    
+    }
+
+    // Locate goondrop-port.txt next to the exe or in the project root (works
+    // when the launcher is copied into the Startup folder).
+    static string? FindPortFile()
+    {
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string local = System.IO.Path.Combine(baseDir, "goondrop-port.txt");
+        if (System.IO.File.Exists(local)) return local;
+
+        var dir = new System.IO.DirectoryInfo(baseDir);
+        while (dir != null)
+        {
+            foreach (var candidate in new[]
+            {
+                System.IO.Path.Combine(dir.FullName, "goondrop-port.txt"),
+                System.IO.Path.Combine(dir.FullName, "goon drop", "goondrop-port.txt"),
+                System.IO.Path.Combine(dir.FullName, "backend", "goondrop-port.txt")
+            })
+            {
+                if (System.IO.File.Exists(candidate)) return candidate;
+            }
+            dir = dir.Parent;
+        }
+        return null;
+    }
 }

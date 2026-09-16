@@ -67,30 +67,56 @@ public partial class Form1 : Form
         }
     }
 
+    private static readonly string HomeCachePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GoonDrop", "home.txt");
+
     private static string FindProjectRoot()
     {
+        // 1) Try the persisted location from a previous successful launch.
+        try
+        {
+            if (File.Exists(HomeCachePath))
+            {
+                var cached = File.ReadAllText(HomeCachePath).Trim();
+                if (!string.IsNullOrEmpty(cached) && IsProjectRoot(cached))
+                {
+                    return cached;
+                }
+            }
+        }
+        catch { }
+
         var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+
+        // 2) Walk up from the executable's folder (works from bin/normal installs).
         var dir = new DirectoryInfo(baseDir);
         while (dir != null)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "backend", "dist", "index.js")))
+            if (IsProjectRoot(dir.FullName))
             {
-                return dir.FullName;
+                return CacheRoot(Path.GetFullPath(dir.FullName));
             }
-            if (File.Exists(Path.Combine(dir.FullName, "goon drop", "backend", "dist", "index.js")))
+            var goonDropSub = Path.Combine(dir.FullName, "goon drop");
+            if (IsProjectRoot(goonDropSub))
             {
-                return Path.Combine(dir.FullName, "goon drop");
+                return CacheRoot(goonDropSub);
             }
             dir = dir.Parent;
         }
 
+        // 3) Fall back to known project locations (works when exe is copied
+        //    into the Startup folder, where the repo is not an ancestor).
         var candidates = new[]
         {
             baseDir,
             Path.Combine(baseDir, ".."),
             Path.Combine(baseDir, "..", ".."),
             Path.Combine(baseDir, "..", "..", ".."),
-            Path.Combine(baseDir, "..", "..", "..", "..")
+            Path.Combine(baseDir, "..", "..", "..", ".."),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "apple airdrop and hand off pwa"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "apple airdrop and hand off pwa", "goon drop"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "OneDrive", "Documents", "apple airdrop and hand off pwa"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "OneDrive", "Documents", "apple airdrop and hand off pwa", "goon drop")
         };
 
         foreach (var c in candidates)
@@ -98,13 +124,31 @@ public partial class Form1 : Form
             try
             {
                 var full = Path.GetFullPath(c);
-                if (File.Exists(Path.Combine(full, "backend", "dist", "index.js"))) return full;
-                if (File.Exists(Path.Combine(full, "goon drop", "backend", "dist", "index.js"))) return Path.Combine(full, "goon drop");
+                if (IsProjectRoot(full)) return CacheRoot(full);
+                var goonDropSub = Path.Combine(full, "goon drop");
+                if (IsProjectRoot(goonDropSub)) return CacheRoot(goonDropSub);
             }
             catch { }
         }
 
         return baseDir;
+    }
+
+    private static bool IsProjectRoot(string candidate)
+    {
+        return Directory.Exists(candidate)
+            && File.Exists(Path.Combine(candidate, "backend", "dist", "index.js"));
+    }
+
+    private static string CacheRoot(string root)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HomeCachePath)!);
+            File.WriteAllText(HomeCachePath, root);
+        }
+        catch { }
+        return root;
     }
 
     public Form1()
