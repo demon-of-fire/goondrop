@@ -15,6 +15,7 @@ It exits non-zero if the ShareExtension bundle still lacks the NSExtension
 dictionary, so CI fails loudly instead of shipping a broken extension.
 """
 import plistlib
+import os
 import sys
 
 SUBSTITUTIONS = {
@@ -24,6 +25,20 @@ SUBSTITUTIONS = {
     "$(PRODUCT_BUNDLE_IDENTIFIER)": "com.goondrop.ios.ShareExtension",
     "$(DEVELOPMENT_LANGUAGE)": "en",
 }
+
+
+def describe(path):
+    if not os.path.exists(path):
+        return "MISSING"
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if not data:
+        return "EMPTY (0 bytes)"
+    try:
+        keys = sorted(plistlib.loads(data).keys())
+    except Exception as exc:  # noqa: BLE001 - diagnostics
+        return f"UNREADABLE ({exc.__class__.__name__}: {exc})"
+    return f"{len(data)} bytes, keys={keys}"
 
 
 def expand(value):
@@ -56,6 +71,9 @@ def main():
     saw_extension = False
     ok = True
     for built_path, source_path in pairs:
+        print(f"FIXUP  {built_path}")
+        print(f"  built  {describe(built_path)}")
+        print(f"  source {describe(source_path)}")
         with open(built_path, "rb") as handle:
             built = plistlib.load(handle)
         with open(source_path, "rb") as handle:
