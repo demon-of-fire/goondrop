@@ -405,7 +405,7 @@ final class ShareViewController: UIViewController {
             return
         }
         if items.contains(where: { if case .failed = $0.status { return true } else { return false } }) {
-            for item in items { update(item, status: .waiting) }
+            for item in items { update(item: item, status: .waiting) }
         }
         startSending()
     }
@@ -435,22 +435,22 @@ final class ShareViewController: UIViewController {
             return
         }
         let item = items[index]
-        update(item, status: .sending(0))
+        update(item: item, status: .sending(0))
         DispatchQueue.main.async { self.statusLabel.text = "Sending \(item.name)…" }
 
         loadPayload(for: item) { [weak self] payload in
             guard let self = self else { return }
             guard let payload = payload else {
-                self.update(item, status: .failed("Unreadable"))
+                self.update(item: item, status: .failed("Unreadable"))
                 self.sendItem(at: index + 1)
                 return
             }
             self.deliver(payload, item: item) { ok, errorText in
                 if ok {
                     self.sentCount += 1
-                    self.update(item, status: .sent)
+                    self.update(item: item, status: .sent)
                 } else {
-                    self.update(item, status: .failed(errorText ?? "Failed"))
+                    self.update(item: item, status: .failed(errorText ?? "Failed"))
                 }
                 self.sendItem(at: index + 1)
             }
@@ -615,7 +615,7 @@ final class ShareViewController: UIViewController {
                 if fraction > 0 {
                     self.progressView.setProgress(Float(fraction), animated: true)
                     if let item = self.items.first(where: { if case .sending = $0.status { return true } else { return false } }) {
-                        self.update(item, status: .sending(fraction))
+                        self.update(item: item, status: .sending(fraction))
                     }
                 }
             }
