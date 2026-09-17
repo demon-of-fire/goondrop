@@ -45,6 +45,7 @@ struct ContentView: View {
         }
         .tint(accent)
         .onAppear {
+            NotificationHelper.requestAuthorizationIfNeeded()
             if config.isConfigured && !client.isPairing && !client.isConnected {
                 client.connect()
             }

@@ -1,453 +1,646 @@
 import UIKit
 import Social
 import UniformTypeIdentifiers
+import UserNotifications
 
-class ShareViewController: UIViewController {
-    
-    // UI Elements
+/// AirDrop-style share sheet: shows the remembered PC as a destination, lists
+/// every shared item with a live status, and sends them all with progress.
+final class ShareViewController: UIViewController {
+
+    // MARK: - Model
+
+    private enum ItemKind {
+        case url, text, image, movie, file
+    }
+
+    private enum ItemStatus {
+        case waiting
+        case sending(Double)
+        case sent
+        case failed(String)
+
+        var text: String {
+            switch self {
+            case .waiting: return "Waiting"
+            case .sending(let p): return p > 0 ? "Sending \(Int(p * 100))%" : "Sending…"
+            case .sent: return "Sent"
+            case .failed(let reason): return "Failed · \(reason)"
+            }
+        }
+
+        var color: UIColor {
+            switch self {
+            case .waiting: return .secondaryLabel
+            case .sending: return .systemOrange
+            case .sent: return .systemGreen
+            case .failed: return .systemRed
+            }
+        }
+    }
+
+    private final class SharedItem {
+        let provider: NSItemProvider
+        let kind: ItemKind
+        var name: String
+        var status: ItemStatus = .waiting
+
+        init(provider: NSItemProvider, kind: ItemKind, name: String) {
+            self.provider = provider
+            self.kind = kind
+            self.name = name
+        }
+    }
+
+    private enum Payload {
+        case url(URL)
+        case text(String)
+        case file(Data, String, String) // data, filename, mime
+    }
+
+    private struct Target {
+        let name: String
+        let host: String
+        let port: Int
+        let code: String
+        let useHttps: Bool
+    }
+
+    // MARK: - State
+
+    private let config = SharedConfig.shared
+    private var target: Target?
+    private var items: [SharedItem] = []
+    private var currentTask: URLSessionTask?
+    private var progressTimer: Timer?
+    private var isSending = false
+    private var sentCount = 0
+
+    // MARK: - UI
+
     private let cardView = UIView()
-    private let iconImageView = UIImageView()
     private let titleLabel = UILabel()
-    private let subtitleLabel = UILabel()
-    private let previewImageView = UIImageView()
+    private let targetIcon = UIImageView()
+    private let targetNameLabel = UILabel()
+    private let targetDetailLabel = UILabel()
+    private let targetStatusDot = UIView()
+    private let itemsStack = UIStackView()
     private let statusLabel = UILabel()
     private let progressView = UIProgressView(progressViewStyle: .default)
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
-    private let actionButton = UIButton(type: .system)
-    private let cancelButton = UIButton(type: .system)
-    
-    private var isSending = false
-    private let config = SharedConfig.shared
-    
+    private let primaryButton = UIButton(type: .system)
+    private let secondaryButton = UIButton(type: .system)
+
+    // MARK: - Lifecycle
+
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
-        processSharedItems()
+        collectItems()
+        resolveTargetAndBegin()
     }
-    
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        progressTimer?.invalidate()
+    }
+
+    // MARK: - Setup
+
     private func setupUI() {
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.4)
-        
-        // Card container
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = .secondarySystemBackground
-        cardView.layer.cornerRadius = 20
-        cardView.layer.shadowColor = UIColor.black.cgColor
-        cardView.layer.shadowOpacity = 0.25
-        cardView.layer.shadowOffset = CGSize(width: 0, height: 10)
-        cardView.layer.shadowRadius = 20
+        cardView.layer.cornerRadius = 22
         cardView.clipsToBounds = true
         view.addSubview(cardView)
-        
-        // App Icon
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        iconImageView.image = UIImage(systemName: "paperplane.circle.fill")
-        iconImageView.tintColor = .systemBlue
-        iconImageView.contentMode = .scaleAspectFit
-        cardView.addSubview(iconImageView)
-        
-        // Title
+
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "Goon Drop"
         titleLabel.font = .systemFont(ofSize: 18, weight: .bold)
         titleLabel.textAlignment = .center
         cardView.addSubview(titleLabel)
-        
-        // Subtitle (Target PC)
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = targetSummary()
-        subtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
-        subtitleLabel.textColor = .secondaryLabel
-        subtitleLabel.textAlignment = .center
-        cardView.addSubview(subtitleLabel)
-        
-        // Preview Image (for photos)
-        previewImageView.translatesAutoresizingMaskIntoConstraints = false
-        previewImageView.contentMode = .scaleAspectFill
-        previewImageView.clipsToBounds = true
-        previewImageView.layer.cornerRadius = 12
-        previewImageView.backgroundColor = .tertiarySystemBackground
-        previewImageView.isHidden = true
-        cardView.addSubview(previewImageView)
-        
-        // Status label
+
+        // Target row (the PC, like an AirDrop recipient)
+        targetIcon.translatesAutoresizingMaskIntoConstraints = false
+        targetIcon.image = UIImage(systemName: "desktopcomputer")
+        targetIcon.tintColor = .systemBlue
+        targetIcon.contentMode = .scaleAspectFit
+        cardView.addSubview(targetIcon)
+
+        targetStatusDot.translatesAutoresizingMaskIntoConstraints = false
+        targetStatusDot.backgroundColor = .systemGray3
+        targetStatusDot.layer.cornerRadius = 5
+        cardView.addSubview(targetStatusDot)
+
+        targetNameLabel.translatesAutoresizingMaskIntoConstraints = false
+        targetNameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        targetNameLabel.text = "Searching for your PC…"
+        cardView.addSubview(targetNameLabel)
+
+        targetDetailLabel.translatesAutoresizingMaskIntoConstraints = false
+        targetDetailLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        targetDetailLabel.textColor = .secondaryLabel
+        targetDetailLabel.text = "Looking on Wi-Fi"
+        cardView.addSubview(targetDetailLabel)
+
+        itemsStack.translatesAutoresizingMaskIntoConstraints = false
+        itemsStack.axis = .vertical
+        itemsStack.spacing = 6
+        cardView.addSubview(itemsStack)
+
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.text = "Preparing item..."
-        statusLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        statusLabel.textColor = .label
+        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        statusLabel.textColor = .secondaryLabel
         statusLabel.textAlignment = .center
         statusLabel.numberOfLines = 2
         cardView.addSubview(statusLabel)
-        
-        // Progress view
+
         progressView.translatesAutoresizingMaskIntoConstraints = false
-        progressView.progress = 0.0
+        progressView.progress = 0
         progressView.isHidden = true
         cardView.addSubview(progressView)
-        
-        // Activity indicator
+
         activityIndicator.translatesAutoresizingMaskIntoConstraints = false
         activityIndicator.hidesWhenStopped = true
         activityIndicator.startAnimating()
         cardView.addSubview(activityIndicator)
-        
-        // Cancel button
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.setTitle("Cancel", for: .normal)
-        cancelButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
-        cancelButton.tintColor = .secondaryLabel
-        cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
-        cardView.addSubview(cancelButton)
-        
-        // Layout Constraints
+
+        primaryButton.translatesAutoresizingMaskIntoConstraints = false
+        primaryButton.setTitle("Send", for: .normal)
+        primaryButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
+        cardView.addSubview(primaryButton)
+
+        secondaryButton.translatesAutoresizingMaskIntoConstraints = false
+        secondaryButton.setTitle("Cancel", for: .normal)
+        secondaryButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
+        secondaryButton.tintColor = .secondaryLabel
+        secondaryButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        cardView.addSubview(secondaryButton)
+
         NSLayoutConstraint.activate([
             cardView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             cardView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            cardView.widthAnchor.constraint(equalToConstant: 320),
-            cardView.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            
-            iconImageView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
-            iconImageView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 44),
-            iconImageView.heightAnchor.constraint(equalToConstant: 44),
-            
-            titleLabel.topAnchor.constraint(equalTo: iconImageView.bottomAnchor, constant: 8),
+            cardView.widthAnchor.constraint(equalToConstant: 330),
+            cardView.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor, multiplier: 0.85),
+
+            titleLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 18),
             titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            subtitleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
-            subtitleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            
-            previewImageView.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 12),
-            previewImageView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            previewImageView.widthAnchor.constraint(equalToConstant: 100),
-            previewImageView.heightAnchor.constraint(equalToConstant: 100),
-            
-            statusLabel.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 12),
+
+            targetIcon.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 14),
+            targetIcon.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            targetIcon.widthAnchor.constraint(equalToConstant: 30),
+            targetIcon.heightAnchor.constraint(equalToConstant: 30),
+
+            targetStatusDot.widthAnchor.constraint(equalToConstant: 10),
+            targetStatusDot.heightAnchor.constraint(equalToConstant: 10),
+            targetStatusDot.centerYAnchor.constraint(equalTo: targetNameLabel.centerYAnchor),
+            targetStatusDot.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+
+            targetNameLabel.topAnchor.constraint(equalTo: targetIcon.topAnchor),
+            targetNameLabel.leadingAnchor.constraint(equalTo: targetIcon.trailingAnchor, constant: 10),
+            targetNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: targetStatusDot.leadingAnchor, constant: -8),
+
+            targetDetailLabel.topAnchor.constraint(equalTo: targetNameLabel.bottomAnchor, constant: 2),
+            targetDetailLabel.leadingAnchor.constraint(equalTo: targetNameLabel.leadingAnchor),
+            targetDetailLabel.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -18),
+
+            itemsStack.topAnchor.constraint(equalTo: targetDetailLabel.bottomAnchor, constant: 14),
+            itemsStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            itemsStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+
+            statusLabel.topAnchor.constraint(equalTo: itemsStack.bottomAnchor, constant: 12),
             statusLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            
-            progressView.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
+
+            progressView.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
             progressView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
             progressView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             progressView.heightAnchor.constraint(equalToConstant: 4),
-            
+
             activityIndicator.topAnchor.constraint(equalTo: progressView.bottomAnchor, constant: 10),
             activityIndicator.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            
-            cancelButton.topAnchor.constraint(equalTo: activityIndicator.bottomAnchor, constant: 12),
-            cancelButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            cancelButton.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16)
+
+            primaryButton.topAnchor.constraint(equalTo: activityIndicator.bottomAnchor, constant: 10),
+            primaryButton.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
+            primaryButton.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
+
+            secondaryButton.topAnchor.constraint(equalTo: primaryButton.bottomAnchor, constant: 8),
+            secondaryButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            secondaryButton.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16)
         ])
     }
-    
-    @objc private func cancelTapped() {
-        extensionContext?.cancelRequest(withError: NSError(domain: "GoonDrop", code: -1, userInfo: [NSLocalizedDescriptionKey: "User cancelled"]))
+
+    private func setTarget(_ target: Target) {
+        self.target = target
+        targetNameLabel.text = target.name
+        targetDetailLabel.text = "\(target.host):\(target.port)"
+        targetStatusDot.backgroundColor = .systemGreen
     }
-    
-    private func finishSuccessfully() {
-        DispatchQueue.main.async {
-            self.activityIndicator.stopAnimating()
-            self.progressView.isHidden = true
-            self.statusLabel.text = "Sent to PC!"
-            self.iconImageView.image = UIImage(systemName: "checkmark.circle.fill")
-            self.iconImageView.tintColor = .systemGreen
-            
-            // Haptic feedback
-            let feedback = UINotificationFeedbackGenerator()
-            feedback.notificationOccurred(.success)
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+
+    // MARK: - Collect shared items
+
+    private func collectItems() {
+        let inputItems = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+        for item in inputItems {
+            guard let attachments = item.attachments else { continue }
+            for provider in attachments {
+                let kind = classify(provider)
+                let name = provider.suggestedName ?? defaultName(for: kind)
+                items.append(SharedItem(provider: provider, kind: kind, name: name))
             }
         }
-    }
-    
-    private func finishWithError(_ message: String) {
-        DispatchQueue.main.async {
-            self.activityIndicator.stopAnimating()
-            self.statusLabel.text = message
-            self.iconImageView.image = UIImage(systemName: "exclamationmark.circle.fill")
-            self.iconImageView.tintColor = .systemRed
-            self.cancelButton.setTitle("Close", for: .normal)
-        }
-    }
-    
-    // MARK: - Process Items
-    
-    private func processSharedItems() {
-        guard let items = extensionContext?.inputItems as? [NSExtensionItem], !items.isEmpty else {
-            finishWithError("No items found to share")
+
+        if items.isEmpty {
+            statusLabel.text = "No supported items to share."
+            activityIndicator.stopAnimating()
+            primaryButton.isHidden = true
             return
         }
-        
+
         for item in items {
-            guard let attachments = item.attachments else { continue }
-            
-            for provider in attachments {
-                // 1. Check for URL (Safari links, YouTube, Twitter)
-                if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] (data, error) in
-                        guard let self = self else { return }
-                        if let url = data as? URL {
-                            self.sendURL(url)
-                        } else {
-                            self.finishWithError("Could not read URL")
-                        }
-                    }
-                    return
-                }
-                
-                // 2. Check for Image
-                if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { [weak self] (item, error) in
-                        guard let self = self else { return }
-                        if let imageURL = item as? URL {
-                            if let data = try? Data(contentsOf: imageURL) {
-                                self.showThumbnail(data: data)
-                                self.uploadFile(data: data, fileName: imageURL.lastPathComponent, mimeType: "image/jpeg")
-                            }
-                        } else if let image = item as? UIImage {
-                            if let data = image.jpegData(compressionQuality: 0.9) {
-                                self.showThumbnail(data: data)
-                                let fileName = "airdrop_\(Int(Date().timeIntervalSince1970)).jpg"
-                                self.uploadFile(data: data, fileName: fileName, mimeType: "image/jpeg")
-                            }
-                        } else if let data = item as? Data {
-                            self.showThumbnail(data: data)
-                            let fileName = "airdrop_\(Int(Date().timeIntervalSince1970)).jpg"
-                            self.uploadFile(data: data, fileName: fileName, mimeType: "image/jpeg")
-                        } else {
-                            self.finishWithError("Could not process image")
-                        }
-                    }
-                    return
-                }
-                
-                // 3. Check for Movie / Video
-                if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.movie.identifier, options: nil) { [weak self] (item, error) in
-                        guard let self = self else { return }
-                        if let movieURL = item as? URL {
-                            if let data = try? Data(contentsOf: movieURL) {
-                                self.uploadFile(data: data, fileName: movieURL.lastPathComponent, mimeType: "video/mp4")
-                            }
-                        } else {
-                            self.finishWithError("Could not read video")
-                        }
-                    }
-                    return
-                }
-                
-                // 4. Check for Document / File / PDF
-                if provider.hasItemConformingToTypeIdentifier(UTType.data.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.data.identifier, options: nil) { [weak self] (item, error) in
-                        guard let self = self else { return }
-                        if let fileURL = item as? URL {
-                            if let data = try? Data(contentsOf: fileURL) {
-                                self.uploadFile(data: data, fileName: fileURL.lastPathComponent, mimeType: "application/octet-stream")
-                            }
-                        } else if let data = item as? Data {
-                            let fileName = "file_\(Int(Date().timeIntervalSince1970)).bin"
-                            self.uploadFile(data: data, fileName: fileName, mimeType: "application/octet-stream")
-                        } else {
-                            self.finishWithError("Could not read file data")
-                        }
-                    }
-                    return
-                }
-                
-                // 5. Check for Plain Text
-                if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { [weak self] (item, error) in
-                        guard let self = self else { return }
-                        if let text = item as? String {
-                            // Check if text is a URL
-                            if text.hasPrefix("http://") || text.hasPrefix("https://"), let url = URL(string: text) {
-                                self.sendURL(url)
-                            } else {
-                                self.sendClipboardText(text)
-                            }
-                        } else {
-                            self.finishWithError("Could not read text")
-                        }
-                    }
-                    return
-                }
+            itemsStack.addArrangedSubview(makeRow(for: item))
+        }
+        statusLabel.text = items.count == 1 ? "1 item ready" : "\(items.count) items ready"
+    }
+
+    private func classify(_ provider: NSItemProvider) -> ItemKind {
+        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) { return .url }
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) { return .image }
+        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) { return .movie }
+        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) { return .text }
+        return .file
+    }
+
+    private func defaultName(for kind: ItemKind) -> String {
+        let stamp = Int(Date().timeIntervalSince1970)
+        switch kind {
+        case .image: return "image_\(stamp).jpg"
+        case .movie: return "video_\(stamp).mp4"
+        case .url: return "Link"
+        case .text: return "Text"
+        case .file: return "file_\(stamp).bin"
+        }
+    }
+
+    private func makeRow(for item: SharedItem) -> UIView {
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = UIImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.contentMode = .scaleAspectFit
+        icon.tintColor = .systemBlue
+        icon.image = UIImage(systemName: iconName(for: item.kind))
+
+        let nameLabel = UILabel()
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.text = item.name
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+
+        let status = UILabel()
+        status.translatesAutoresizingMaskIntoConstraints = false
+        status.font = .systemFont(ofSize: 12, weight: .regular)
+        status.textAlignment = .right
+        status.text = item.status.text
+        status.textColor = item.status.color
+
+        row.addSubview(icon)
+        row.addSubview(nameLabel)
+        row.addSubview(status)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 34),
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            status.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 8),
+            status.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            status.centerYAnchor.constraint(equalTo: row.centerYAnchor)
+        ])
+        // remember the status label so we can refresh it
+        statusInRows[ObjectIdentifier(item)] = status
+        return row
+    }
+
+    private var statusInRows: [ObjectIdentifier: UILabel] = [:]
+
+    private func iconName(for kind: ItemKind) -> String {
+        switch kind {
+        case .url: return "link"
+        case .text: return "text.alignleft"
+        case .image: return "photo"
+        case .movie: return "film"
+        case .file: return "doc"
+        }
+    }
+
+    private func update(item: SharedItem, status: ItemStatus) {
+        item.status = status
+        DispatchQueue.main.async {
+            self.statusInRows[ObjectIdentifier(item)]?.text = status.text
+            self.statusInRows[ObjectIdentifier(item)]?.textColor = status.color
+        }
+    }
+
+    // MARK: - Target resolution
+
+    private func resolveTargetAndBegin() {
+        statusLabel.text = "Finding your PC…"
+        resolveTarget { [weak self] target in
+            guard let self = self else { return }
+            guard let target = target else {
+                self.activityIndicator.stopAnimating()
+                self.statusLabel.text = "No Goon Drop PC found. Open the Goon Drop app once on this Wi-Fi."
+                self.targetNameLabel.text = "No PC found"
+                self.targetDetailLabel.text = "Scan the app to pair"
+                self.primaryButton.setTitle("Retry", for: .normal)
+                return
+            }
+            self.setTarget(target)
+            if self.config.autoSend {
+                self.statusLabel.text = "Sending to \(target.name)…"
+                self.startSending()
+            } else {
+                self.activityIndicator.stopAnimating()
+                self.statusLabel.text = "Ready to send to \(target.name)"
+                self.primaryButton.setTitle("Send to \(target.name)", for: .normal)
             }
         }
-        
-        finishWithError("No supported item found to share")
     }
-    
-    private func showThumbnail(data: Data) {
-        DispatchQueue.main.async {
-            self.previewImageView.image = UIImage(data: data)
-            self.previewImageView.isHidden = false
+
+    private func resolveTarget(completion: @escaping (Target?) -> Void) {
+        if let device = DeviceStore.shared.defaultDevice {
+            completion(Target(name: device.name, host: device.host, port: device.port,
+                              code: device.pairingCode, useHttps: device.useHttps))
+            return
         }
-    }
-    
-    // MARK: - Networking
-
-    private struct TargetServer {
-        let host: String
-        let port: Int
-        let pairingCode: String
-    }
-
-    /// Where to send the item. Prefers the saved config (App Group, when signed
-    /// with one) and falls back to live UDP discovery so the share sheet works
-    /// even when sideloaded without an App Group (free Apple ID / SideStore).
-    private func resolveTargetAsync(completion: @escaping (TargetServer?) -> Void) {
         if config.isConfigured && !config.serverHost.isEmpty && config.serverHost != "192.168.1.100" {
-            completion(TargetServer(host: config.serverHost, port: config.serverPort, pairingCode: config.pairingCode))
+            let name = config.serverName.isEmpty ? "PC" : config.serverName
+            completion(Target(name: name, host: config.serverHost, port: config.serverPort,
+                              code: config.pairingCode, useHttps: config.useHttps))
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
             let server = LANDiscovery.discover(timeout: 1.5).first
             DispatchQueue.main.async {
-                completion(server.map { TargetServer(host: $0.ip, port: $0.port, pairingCode: $0.pairingCode) })
+                completion(server.map {
+                    Target(name: $0.serverName, host: $0.ip, port: $0.port, code: $0.pairingCode, useHttps: true)
+                })
             }
         }
     }
 
-    private func targetSummary() -> String {
-        if config.isConfigured && !config.serverHost.isEmpty && config.serverHost != "192.168.1.100" {
-            return "PC: \(config.serverHost):\(config.serverPort)"
+    // MARK: - Actions
+
+    @objc private func primaryTapped() {
+        if target == nil {
+            resolveTargetAndBegin()
+            return
         }
-        return "Searching for your PC..."
+        if items.contains(where: { if case .failed = $0.status { return true } else { return false } }) {
+            for item in items { update(item, status: .waiting) }
+        }
+        startSending()
     }
 
-    private func endpoint(_ target: TargetServer, _ path: String) -> URL? {
-        let scheme = config.useHttps ? "https" : "http"
+    @objc private func cancelTapped() {
+        currentTask?.cancel()
+        extensionContext?.cancelRequest(withError: NSError(domain: "GoonDrop", code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "User cancelled"]))
+    }
+
+    // MARK: - Sending
+
+    private func startSending() {
+        guard !isSending, !items.isEmpty, let _ = target else { return }
+        isSending = true
+        sentCount = 0
+        primaryButton.isHidden = true
+        progressView.isHidden = false
+        progressView.progress = 0
+        activityIndicator.startAnimating()
+        sendItem(at: 0)
+    }
+
+    private func sendItem(at index: Int) {
+        guard index < items.count else {
+            finishSending()
+            return
+        }
+        let item = items[index]
+        update(item, status: .sending(0))
+        DispatchQueue.main.async { self.statusLabel.text = "Sending \(item.name)…" }
+
+        loadPayload(for: item) { [weak self] payload in
+            guard let self = self else { return }
+            guard let payload = payload else {
+                self.update(item, status: .failed("Unreadable"))
+                self.sendItem(at: index + 1)
+                return
+            }
+            self.deliver(payload, item: item) { ok, errorText in
+                if ok {
+                    self.sentCount += 1
+                    self.update(item, status: .sent)
+                } else {
+                    self.update(item, status: .failed(errorText ?? "Failed"))
+                }
+                self.sendItem(at: index + 1)
+            }
+        }
+    }
+
+    private func finishSending() {
+        isSending = false
+        stopProgressTimer()
+        DispatchQueue.main.async { self.applyFinishedState() }
+    }
+
+    private func applyFinishedState() {
+        progressView.isHidden = true
+        activityIndicator.stopAnimating()
+
+        let total = items.count
+        let allSent = sentCount == total
+        let targetName = target?.name ?? "PC"
+
+        statusLabel.text = allSent
+            ? (total == 1 ? "Sent to \(targetName)" : "Sent \(total) items to \(targetName)")
+            : "\(sentCount) of \(total) sent to \(targetName)"
+        primaryButton.isHidden = !allSent
+        if !allSent { primaryButton.setTitle("Retry failed", for: .normal) }
+
+        let feedback = UINotificationFeedbackGenerator()
+        feedback.notificationOccurred(allSent ? .success : .error)
+
+        notifyCompletion(sent: sentCount, total: total, device: targetName)
+
+        if allSent {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+            }
+        }
+    }
+
+    // MARK: - Payload loading
+
+    private func loadPayload(for item: SharedItem, completion: @escaping (Payload?) -> Void) {
+        let provider = item.provider
+        switch item.kind {
+        case .url:
+            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { data, _ in
+                var url: URL?
+                if let u = data as? URL { url = u }
+                else if let s = data as? String { url = URL(string: s) }
+                else if let d = data as? Data, let s = String(data: d, encoding: .utf8) { url = URL(string: s) }
+                completion(url.map { .url($0) })
+            }
+        case .text:
+            provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { data, _ in
+                if let s = data as? String { completion(.text(s)) }
+                else if let d = data as? Data, let s = String(data: d, encoding: .utf8) { completion(.text(s)) }
+                else { completion(nil) }
+            }
+        case .image:
+            loadFileData(provider: provider, type: UTType.image.identifier) { data in
+                guard let data = data else { completion(nil); return }
+                completion(.file(data, item.name, "image/jpeg"))
+            }
+        case .movie:
+            loadFileData(provider: provider, type: UTType.movie.identifier) { data in
+                guard let data = data else { completion(nil); return }
+                completion(.file(data, item.name, "video/mp4"))
+            }
+        case .file:
+            loadFileData(provider: provider, type: UTType.data.identifier) { data in
+                guard let data = data else { completion(nil); return }
+                completion(.file(data, item.name, "application/octet-stream"))
+            }
+        }
+    }
+
+    private func loadFileData(provider: NSItemProvider, type: String, completion: @escaping (Data?) -> Void) {
+        provider.loadItem(forTypeIdentifier: type, options: nil) { data, _ in
+            if let url = data as? URL, let contents = try? Data(contentsOf: url) {
+                completion(contents)
+            } else if let image = data as? UIImage, let contents = image.jpegData(compressionQuality: 0.9) {
+                completion(contents)
+            } else if let contents = data as? Data {
+                completion(contents)
+            } else {
+                completion(nil)
+            }
+        }
+    }
+
+    // MARK: - Delivery
+
+    private func endpoint(_ target: Target, _ path: String) -> URL? {
+        let scheme = target.useHttps ? "https" : "http"
         return URL(string: "\(scheme)://\(target.host):\(target.port)\(path)")
     }
 
-    private func sendURL(_ url: URL) {
-        DispatchQueue.main.async {
-            self.statusLabel.text = "Searching for your PC..."
-        }
-        resolveTargetAsync { [weak self] target in
-            guard let self = self else { return }
-            guard let target = target, let endpoint = self.endpoint(target, "/api/handoff") else {
-                self.finishWithError("No Goon Drop PC found")
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
-                self.statusLabel.text = "Handoff to PC..."
-            }
-            
-            var request = URLRequest(url: endpoint)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if !target.pairingCode.isEmpty {
-                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-            }
-            
-            let payload = ["url": url.absoluteString]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-            
-            let session = SharedConfig.makeLANSession()
-            session.dataTask(with: request) { (data, response, error) in
-                if let error = error {
-                    self.finishWithError("Transfer failed: \(error.localizedDescription)")
-                    return
-                }
-                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    self.finishSuccessfully()
-                } else {
-                    self.finishWithError("PC rejected request")
-                }
-            }.resume()
+    private func deliver(_ payload: Payload, item: SharedItem, completion: @escaping (Bool, String?) -> Void) {
+        guard let target = target else { completion(false, "No PC"); return }
+        switch payload {
+        case .url(let url):
+            postJSON(target, "/api/handoff", ["url": url.absoluteString], completion)
+        case .text(let text):
+            postJSON(target, "/api/clipboard", ["text": text], completion)
+        case .file(let data, let name, let mime):
+            postMultipart(target, data: data, fileName: name, mimeType: mime, completion)
         }
     }
-    
-    private func sendClipboardText(_ text: String) {
-        DispatchQueue.main.async {
-            self.statusLabel.text = "Searching for your PC..."
+
+    private func postJSON(_ target: Target, _ path: String, _ body: [String: Any],
+                          _ completion: @escaping (Bool, String?) -> Void) {
+        guard let url = endpoint(target, path) else { completion(false, "Bad URL"); return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !target.code.isEmpty { request.setValue(target.code, forHTTPHeaderField: "x-goondrop-code") }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let task = SharedConfig.makeLANSession().dataTask(with: request) { _, response, error in
+            if let error = error { completion(false, error.localizedDescription); return }
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            completion((200...299).contains(code), code == 0 ? "No response" : "HTTP \(code)")
         }
-        resolveTargetAsync { [weak self] target in
-            guard let self = self else { return }
-            guard let target = target, let endpoint = self.endpoint(target, "/api/clipboard") else {
-                self.finishWithError("No Goon Drop PC found")
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
-                self.statusLabel.text = "Copying to PC clipboard..."
-            }
-            
-            var request = URLRequest(url: endpoint)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if !target.pairingCode.isEmpty {
-                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-            }
-            
-            let payload = ["text": text]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-            
-            let session = SharedConfig.makeLANSession()
-            session.dataTask(with: request) { (data, response, error) in
-                if let error = error {
-                    self.finishWithError("Transfer failed: \(error.localizedDescription)")
-                    return
+        currentTask = task
+        startProgressTimer()
+        task.resume()
+    }
+
+    private func postMultipart(_ target: Target, data: Data, fileName: String, mimeType: String,
+                               _ completion: @escaping (Bool, String?) -> Void) {
+        guard let url = endpoint(target, "/api/drop") else { completion(false, "Bad URL"); return }
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if !target.code.isEmpty { request.setValue(target.code, forHTTPHeaderField: "x-goondrop-code") }
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        let task = SharedConfig.makeLANSession().uploadTask(with: request, from: body) { _, response, error in
+            if let error = error { completion(false, error.localizedDescription); return }
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            completion((200...299).contains(code), code == 0 ? "No response" : "HTTP \(code)")
+        }
+        currentTask = task
+        startProgressTimer()
+        task.resume()
+    }
+
+    // MARK: - Progress
+
+    private func startProgressTimer() {
+        stopProgressTimer()
+        DispatchQueue.main.async {
+            self.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+                guard let self = self, let task = self.currentTask else { return }
+                let fraction = task.progress.fractionCompleted
+                if fraction > 0 {
+                    self.progressView.setProgress(Float(fraction), animated: true)
+                    if let item = self.items.first(where: { if case .sending = $0.status { return true } else { return false } }) {
+                        self.update(item, status: .sending(fraction))
+                    }
                 }
-                self.finishSuccessfully()
-            }.resume()
+            }
         }
     }
-    
-    private func uploadFile(data: Data, fileName: String, mimeType: String) {
+
+    private func stopProgressTimer() {
         DispatchQueue.main.async {
-            self.statusLabel.text = "Searching for your PC..."
+            self.progressTimer?.invalidate()
+            self.progressTimer = nil
         }
-        resolveTargetAsync { [weak self] target in
-            guard let self = self else { return }
-            guard let target = target, let endpoint = self.endpoint(target, "/api/drop") else {
-                self.finishWithError("No Goon Drop PC found")
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self.subtitleLabel.text = "PC: \(target.host):\(target.port)"
-                self.statusLabel.text = "Dropping to PC: \(fileName)"
-                self.progressView.isHidden = false
-                self.progressView.progress = 0.2
-            }
-            
-            let boundary = "Boundary-\(UUID().uuidString)"
-            var request = URLRequest(url: endpoint)
-            request.httpMethod = "POST"
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            if !target.pairingCode.isEmpty {
-                request.setValue(target.pairingCode, forHTTPHeaderField: "x-goondrop-code")
-            }
-            
-            var body = Data()
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
-            body.append(data)
-            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-            
-            let session = SharedConfig.makeLANSession()
-            let task = session.uploadTask(with: request, from: body) { (data, response, error) in
-                if let error = error {
-                    self.finishWithError("Drop failed: \(error.localizedDescription)")
-                    return
-                }
-                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    self.finishSuccessfully()
-                } else {
-                    self.finishWithError("PC server error (\((response as? HTTPURLResponse)?.statusCode ?? 0))")
-                }
-            }
-            task.resume()
+    }
+
+    // MARK: - Notification
+
+    private func notifyCompletion(sent: Int, total: Int, device: String) {
+        let content = UNMutableNotificationContent()
+        if sent == total {
+            content.title = "Sent to \(device)"
+            content.body = total == 1 ? "Your item was delivered." : "\(total) items delivered."
+        } else {
+            content.title = "Send incomplete"
+            content.body = "\(sent) of \(total) items delivered to \(device)."
         }
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
