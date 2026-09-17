@@ -5,6 +5,7 @@ struct ContentView: View {
     @ObservedObject private var config = SharedConfig.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
+    @State private var showOnboarding = false
     @State private var selectedTab = 0
 
     private let accent = Color(red: 0.0, green: 0.9, blue: 0.63)
@@ -44,10 +45,16 @@ struct ContentView: View {
             }
         }
         .tint(accent)
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView()
+        }
         .onAppear {
             NotificationHelper.requestAuthorizationIfNeeded()
             if config.isConfigured && !client.isPairing && !client.isConnected {
                 client.connect()
+            }
+            if !config.isConfigured {
+                showOnboarding = true
             }
         }
         .onChange(of: scenePhase) { phase in
