@@ -1,6 +1,6 @@
 /** Device pairing handler - manages pairing flow, tokens, and device registry */
 import type { ConnectionManager, Client } from './websocket';
-import { generateId } from './utils';
+import { generateId, getMachineName } from './utils';
 import { PushManager } from './pushManager';
 import { loadJson, saveJson } from './storage';
 import fs from 'fs';
@@ -311,7 +311,7 @@ export class PairingManager {
       payload: {
         deviceId: client.id,
         token,
-        serverName: `Goon Drop`,
+        serverName: getMachineName(),
         devices: this.conn.getDeviceList(),
       },
       id: generateId(),
@@ -361,7 +361,7 @@ public handlePairConfirm(client: Client, deviceId: string, token: string, device
       payload: {
         deviceId,
         token,
-        serverName: 'Goon Drop',
+        serverName: getMachineName(),
         devices: this.conn.getDeviceList()
       },
       id: generateId(),
@@ -400,7 +400,7 @@ public handlePairConfirm(client: Client, deviceId: string, token: string, device
       payload: {
         deviceId,
         token,
-        serverName: 'Goon Drop',
+        serverName: getMachineName(),
         devices: this.conn.getDeviceList()
       },
       id: generateId(),

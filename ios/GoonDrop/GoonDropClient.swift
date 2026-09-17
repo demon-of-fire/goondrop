@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Combine
+import Network
 
 /// Native WebSocket + pairing client for the Goon Drop PC server.
 ///
@@ -26,9 +27,15 @@ final class GoonDropClient: NSObject, ObservableObject {
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
+    private var handshakeClientId: String?
+    private var handshakeToken: String?
+    private var pairFallback: DispatchWorkItem?
+    private var pathMonitor: NWPathMonitor?
+    private var didStartAutoReconnect = false
 
     override init() {
         super.init()
+        startAutoReconnect()
     }
 
     // MARK: - Connection lifecycle
@@ -81,12 +88,54 @@ final class GoonDropClient: NSObject, ObservableObject {
     func disconnect() {
         receiveTask?.cancel()
         heartbeatTask?.cancel()
+        pairFallback?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         session = nil
         isPairing = false
         isConnected = false
         devices = []
+    }
+
+    // MARK: - Remembered devices & auto-reconnect
+
+    /// Watch the network and re-establish the connection whenever Wi-Fi returns
+    /// or the app comes back to the foreground.
+    func startAutoReconnect() {
+        guard !didStartAutoReconnect else { return }
+        didStartAutoReconnect = true
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            DispatchQueue.main.async { self?.reconnectIfPossible() }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.goondrop.path"))
+        pathMonitor = monitor
+    }
+
+    func reconnectIfPossible() {
+        guard SharedConfig.shared.isConfigured else { return }
+        guard !isConnected, !isPairing else { return }
+        connect()
+    }
+
+    func connectToKnown(_ device: KnownDevice) {
+        let config = SharedConfig.shared
+        config.serverHost = device.host
+        config.serverPort = device.port
+        config.useHttps = device.useHttps
+        config.pairingCode = device.pairingCode
+        config.serverName = device.name
+        config.isConfigured = true
+        connect()
+    }
+
+    func forgetDevice(_ device: KnownDevice) {
+        DeviceStore.shared.remove(id: device.id)
+        let config = SharedConfig.shared
+        if config.serverHost == device.host && config.serverPort == device.port {
+            disconnect()
+        }
     }
 
     private func receiveLoop() async {
@@ -129,6 +178,18 @@ final class GoonDropClient: NSObject, ObservableObject {
         config.pairingCode = server.pairingCode
         config.serverName = server.serverName
         config.isConfigured = true
+        DeviceStore.shared.upsert(KnownDevice(
+            id: "\(server.ip):\(server.port)",
+            name: server.serverName,
+            host: server.ip,
+            port: server.port,
+            pairingCode: server.pairingCode,
+            useHttps: true,
+            token: "",
+            certFingerprint: nil,
+            lastSeen: Int(Date().timeIntervalSince1970 * 1000),
+            isDefault: false
+        ))
         connect()
     }
 
@@ -211,22 +272,22 @@ final class GoonDropClient: NSObject, ObservableObject {
         switch type {
         case "handshake":
             if let p = payload as? [String: Any] {
-                if let name = p["serverName"] as? String { serverName = name }
+                if let name = p["serverName"] as? String, !name.isEmpty { serverName = name }
                 if let code = p["pairingCode"] as? String, !code.isEmpty { pairingCode = code }
+                if let clientId = p["clientId"] as? String { handshakeClientId = clientId }
+                if let token = p["token"] as? String { handshakeToken = token }
             }
-            sendJSON(envelope("pair_request", [
-                "deviceName": UIDevice.current.name,
-                "deviceType": "ios",
-                "pairingCode": pairingCode
-            ]))
+            attemptPairing()
 
         case "paired":
             isPairing = false
             isConnected = true
             statusMessage = "Connected"
+            pairFallback?.cancel()
             if let p = payload as? [String: Any] {
                 if let name = p["serverName"] as? String, !name.isEmpty { serverName = name }
                 if let devs = p["devices"] as? [[String: Any]] { devices = parseDevices(devs) }
+                rememberCurrentDevice(from: p)
             }
             requestClipboard()
 
@@ -276,6 +337,63 @@ final class GoonDropClient: NSObject, ObservableObject {
         default:
             break
         }
+    }
+
+    // MARK: - Pairing helpers
+
+    /// Prefer silent re-authentication with a stored token; fall back to the
+    /// pairing code if the PC no longer recognises this device.
+    private func attemptPairing() {
+        let config = SharedConfig.shared
+        if let known = DeviceStore.shared.device(matchingHost: config.serverHost, port: config.serverPort),
+           !known.token.isEmpty, !known.id.isEmpty {
+            sendJSON(envelope("pair_confirm", [
+                "deviceId": known.id,
+                "token": known.token,
+                "deviceName": UIDevice.current.name
+            ]))
+            schedulePairFallback()
+        } else {
+            sendPairRequest()
+        }
+    }
+
+    private func sendPairRequest() {
+        sendJSON(envelope("pair_request", [
+            "deviceName": UIDevice.current.name,
+            "deviceType": "ios",
+            "pairingCode": pairingCode
+        ]))
+    }
+
+    private func schedulePairFallback() {
+        pairFallback?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.isConnected else { return }
+            self.sendPairRequest()
+        }
+        pairFallback = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
+    private func rememberCurrentDevice(from payload: [String: Any]) {
+        let config = SharedConfig.shared
+        let deviceId = (payload["deviceId"] as? String) ?? handshakeClientId ?? ""
+        guard !deviceId.isEmpty else { return }
+        let token = (payload["token"] as? String) ?? handshakeToken ?? ""
+        let device = KnownDevice(
+            id: deviceId,
+            name: serverName.isEmpty ? "PC" : serverName,
+            host: config.serverHost,
+            port: config.serverPort,
+            pairingCode: pairingCode.isEmpty ? config.pairingCode : pairingCode,
+            useHttps: config.useHttps,
+            token: token,
+            certFingerprint: nil,
+            lastSeen: Int(Date().timeIntervalSince1970 * 1000),
+            isDefault: false
+        )
+        DeviceStore.shared.upsert(device)
     }
 
     // MARK: - Parsers

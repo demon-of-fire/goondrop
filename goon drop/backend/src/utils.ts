@@ -1,7 +1,14 @@
 /** Shared backend utilities */
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { randomUUID } from 'crypto';
+
+/** Human-friendly machine name for this PC. `COMPUTERNAME` keeps Windows'
+ *  display casing (e.g. "AARYAN"); `os.hostname()` is the fallback elsewhere. */
+export function getMachineName(): string {
+  return (process.env.COMPUTERNAME || os.hostname() || 'Goon Drop PC').trim();
+}
 
 export function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {

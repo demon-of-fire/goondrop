@@ -42,6 +42,8 @@ targets:
       - path: ShareExtension
       - path: GoonDrop/SharedConfig.swift
       - path: GoonDrop/Models.swift
+      - path: GoonDrop/KnownDevice.swift
+      - path: GoonDrop/DeviceStore.swift
       - path: GoonDrop/LANDiscovery.swift
     entitlements:
       path: ShareExtension/ShareExtension.entitlements

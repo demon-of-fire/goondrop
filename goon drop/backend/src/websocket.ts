@@ -2,7 +2,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { AppConfig } from './config';
-import { generateId, hashText } from './utils';
+import { generateId, hashText, getMachineName } from './utils';
 
 export interface Client {
   ws: WebSocket;
@@ -69,7 +69,7 @@ export class ConnectionManager {
           clientId: client.id,
           token: client.token,
           pairingCode: this.config.pairingCode,
-          serverName: `Goon Drop on ${this.config.localIp}`,
+          serverName: getMachineName(),
         },
         id: generateId(),
         timestamp: Date.now(),

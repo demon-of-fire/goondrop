@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject private var client = GoonDropClient.shared
     @ObservedObject private var config = SharedConfig.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
     @State private var selectedTab = 0
 
@@ -46,6 +47,11 @@ struct ContentView: View {
         .onAppear {
             if config.isConfigured && !client.isPairing && !client.isConnected {
                 client.connect()
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                client.reconnectIfPossible()
             }
         }
     }

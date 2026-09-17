@@ -17,7 +17,7 @@ import { PairingManager } from './pairing';
 import { ClipboardManager } from './clipboard';
 import { FileTransferManager } from './filetransfer';
 import { createServer } from './server';
-import { generateId } from './utils';
+import { generateId, getMachineName } from './utils';
 import { getOrCreateCertificates } from './certs';
 import { PushManager } from './pushManager';
 import { createShortcutFiles } from './shortcuts';
@@ -457,7 +457,7 @@ async function main(): Promise<void> {
            ip: config.localIp,
            port: config.port + 1,
            pairingCode: config.pairingCode,
-           serverName: 'Goon Drop'
+           serverName: getMachineName()
          }));
          udpServer.send(reply, 0, reply.length, rinfo.port, rinfo.address);
        }
@@ -470,7 +470,7 @@ async function main(): Promise<void> {
          ip: config.localIp,
          port: config.port + 1,
          pairingCode: config.pairingCode,
-         serverName: 'Goon Drop'
+         serverName: getMachineName()
        }));
        // Broadcast to local subnet on port 3943
        udpServer.send(message, 0, message.length, 3943, '255.255.255.255');

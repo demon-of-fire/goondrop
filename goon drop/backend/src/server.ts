@@ -10,7 +10,7 @@ import busboy from 'busboy';
 import type { AppConfig } from './config';
 import type { FileTransferManager } from './filetransfer';
 import type { ClipboardManager } from './clipboard';
-import { generateId as genId, hashText } from './utils';
+import { generateId as genId, hashText, getMachineName } from './utils';
 import { buildShortcutPlist, getShortcutDefinitions, SHORTCUT_CATEGORIES } from './shortcuts';
 
 import type { PairingManager } from './pairing';
@@ -172,7 +172,7 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
         margin: 2,
         color: { dark: '#000000', light: '#ffffff' },
       });
-      res.json({ qrCode: qrDataUrl, pairingUrl, pairingCode: config.pairingCode });
+      res.json({ qrCode: qrDataUrl, pairingUrl, pairingCode: config.pairingCode, serverName: getMachineName() });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to generate QR code' });
     }

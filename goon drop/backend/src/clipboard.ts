@@ -108,15 +108,19 @@ export class ClipboardManager {
 
     saveJson('clipboard_history.json', this.history);
 
-    // Native Windows Clipboard Integration — write to PC clipboard via stdin pipe (safe from injection)
+    // Native Windows Clipboard Integration — the text is written to a temp file
+    // and piped through `Get-Content -Raw | Set-Clipboard`. Piping to the
+    // process's stdin with a bare `Set-Clipboard` does NOT bind the text (it
+    // silently leaves the clipboard unchanged), so the file-pipe form is used.
     try {
-      const child = exec(`powershell.exe -NoProfile -WindowStyle Hidden -command "Set-Clipboard"`, (err) => {
-        if (err) { /* ignore clipboard write errors */ }
-      });
-      if (child.stdin) {
-        child.stdin.write(text);
-        child.stdin.end();
-      }
+      const tempFile = path.join(os.tmpdir(), `goondrop-clip-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+      fs.writeFileSync(tempFile, text, 'utf8');
+      exec(
+        `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Get-Content -Raw -LiteralPath '${tempFile}' -Encoding UTF8 | Set-Clipboard"`,
+        () => {
+          try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
+        }
+      );
     } catch { /* ignore */ }
 
     // Broadcast to all other paired devices
