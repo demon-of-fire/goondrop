@@ -14,6 +14,8 @@ interface ClipboardEntry {
   timestamp: number;
   sourceDeviceId: string;
   sourceDeviceName: string;
+  /** Pinned entries are never auto-trimmed out of the history. */
+  pinned?: boolean;
 }
 
 export class ClipboardManager {
@@ -55,6 +57,63 @@ export class ClipboardManager {
     this.conn.on('clipboard_clear', () => {
       this.handleClipboardClear();
     });
+
+    this.conn.on('clipboard_pin', (client, payload: any) => {
+      const { hash, pinned } = payload || {};
+      if (typeof hash !== 'string') return;
+      this.pinEntry(hash, pinned !== false);
+      this.conn.send(client, {
+        type: 'clipboard_history',
+        payload: this.search(''),
+        id: generateId(),
+        timestamp: Date.now(),
+      });
+    });
+  }
+
+  /** Pin/unpin a history entry so it is protected from auto-trimming. */
+  public pinEntry(hash: string, pinned: boolean): boolean {
+    const entry = this.history.find(e => e.hash === hash);
+    if (!entry) return false;
+    entry.pinned = pinned;
+    saveJson('clipboard_history.json', this.history);
+    this.conn.broadcastToPaired({
+      type: 'clipboard_pinned',
+      payload: { hash, pinned },
+      id: generateId(),
+      timestamp: Date.now(),
+    });
+    return true;
+  }
+
+  /** Case-insensitive search over history text, newest first. */
+  public search(query: string): ClipboardEntry[] {
+    const q = (query || '').trim().toLowerCase();
+    const list = q
+      ? this.history.filter(e => e.text.toLowerCase().includes(q) || e.sourceDeviceName.toLowerCase().includes(q))
+      : this.history;
+    // Pinned entries float to the top, otherwise newest-first.
+    return [...list].sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      return b.timestamp - a.timestamp;
+    });
+  }
+
+  /** Put a specific history entry back onto the PC clipboard. */
+  public restore(hash: string): boolean {
+    const entry = this.history.find(e => e.hash === hash);
+    if (!entry) return false;
+    try {
+      const tempFile = path.join(os.tmpdir(), `goondrop-clip-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+      fs.writeFileSync(tempFile, entry.text, 'utf8');
+      exec(
+        `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "Get-Content -Raw -LiteralPath '${tempFile}' -Encoding UTF8 | Set-Clipboard"`,
+        () => {
+          try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
+        }
+      );
+    } catch { /* ignore */ }
+    return true;
   }
 
   /** Handle incoming clipboard push from a device */
@@ -101,8 +160,12 @@ export class ClipboardManager {
     };
 
     this.history.unshift(entry);
-    if (this.history.length > this.maxHistory) {
-      const removed = this.history.pop();
+    // Trim oldest *unpinned* entries once over capacity — pinned items stay.
+    while (this.history.length > this.maxHistory) {
+      const idx = [...this.history].reverse().findIndex(e => !e.pinned);
+      if (idx === -1) break; // everything pinned; keep them all
+      const realIndex = this.history.length - 1 - idx;
+      const [removed] = this.history.splice(realIndex, 1);
       if (removed) this.recentHashes.delete(removed.hash);
     }
 
@@ -153,7 +216,7 @@ export class ClipboardManager {
   private handleClipboardRequest(client: Client): void {
     this.conn.send(client, {
       type: 'clipboard_history',
-      payload: this.history.slice(0, 20),
+      payload: this.search('').slice(0, 30),
       id: generateId(),
       timestamp: Date.now(),
     });

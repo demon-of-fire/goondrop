@@ -425,6 +425,33 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     res.status(400).json({ error: 'No text provided' });
   });
 
+  /** Searchable clipboard history (pinned entries first). */
+  app.get('/api/clipboard/history', requireCode, (req: Request, res: Response) => {
+    const q = String(req.query.q || '');
+    res.json({ query: q, items: clipboardManager.search(q) });
+  });
+
+  /** Pin or unpin a clipboard entry so it survives auto-trimming. */
+  app.post('/api/clipboard/pin', requireCode, (req: Request, res: Response) => {
+    const hash = String(req.body?.hash || '');
+    const pinned = req.body?.pinned !== false;
+    if (!hash) {
+      res.status(400).json({ error: 'A clipboard hash is required' });
+      return;
+    }
+    res.json({ ok: clipboardManager.pinEntry(hash, pinned), hash, pinned });
+  });
+
+  /** Put a past clipboard entry back onto the PC clipboard. */
+  app.post('/api/clipboard/restore', requireCode, (req: Request, res: Response) => {
+    const hash = String(req.body?.hash || '');
+    if (!hash) {
+      res.status(400).json({ error: 'A clipboard hash is required' });
+      return;
+    }
+    res.json({ ok: clipboardManager.restore(hash), hash });
+  });
+
   /**
    * Universal Clipboard sync — ONE request, no client-side branching, no
    * dependency on other shortcuts. The phone POSTs its clipboard text and the

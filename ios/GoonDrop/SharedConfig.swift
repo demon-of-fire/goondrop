@@ -106,6 +106,10 @@ public class SharedConfig: ObservableObject {
         URL(string: "\(baseURLString)/api/clipboard")
     }
     
+    public var apiClipboardRestoreURL: URL? {
+        URL(string: "\(baseURLString)/api/clipboard/restore")
+    }
+    
     public var apiHealthURL: URL? {
         URL(string: "\(baseURLString)/api/health")
     }

@@ -20,6 +20,8 @@ struct GoonClipboard: Identifiable, Equatable {
     let timestamp: Int
     let sourceDeviceName: String
     let kind: String
+    var hash: String = ""
+    var pinned: Bool = false
 
     var id: String { "\(timestamp)-\(text.prefix(12))" }
 }

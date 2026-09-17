@@ -216,6 +216,31 @@ final class GoonDropClient: NSObject, ObservableObject {
         statusMessage = "Clipboard history cleared"
     }
 
+    /// Pin/unpin a clipboard entry so it survives auto-trimming on the PC.
+    func pinClipboard(_ item: GoonClipboard, pinned: Bool) {
+        if let index = clipboardItems.firstIndex(where: { $0.id == item.id }) {
+            clipboardItems[index].pinned = pinned
+        }
+        if !item.hash.isEmpty {
+            sendJSON(envelope("clipboard_pin", ["hash": item.hash, "pinned": pinned]))
+        }
+        statusMessage = pinned ? "Pinned" : "Unpinned"
+    }
+
+    /// Put a past entry back onto the PC clipboard.
+    func restoreClipboardToPC(_ item: GoonClipboard) {
+        guard !item.hash.isEmpty, let url = SharedConfig.shared.apiClipboardRestoreURL else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let code = SharedConfig.shared.pairingCode
+        if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["hash": item.hash])
+        SharedConfig.makeLANSession().dataTask(with: request) { [weak self] _, _, _ in
+            DispatchQueue.main.async { self?.statusMessage = "Copied to PC clipboard" }
+        }.resume()
+    }
+
     func sendLink(_ raw: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.lowercased().hasPrefix("http") else {
@@ -321,6 +346,14 @@ final class GoonDropClient: NSObject, ObservableObject {
 
         case "clipboard_history":
             if let clips = payload as? [[String: Any]] { clipboardItems = parseClips(clips) }
+
+        case "clipboard_pinned":
+            if let p = payload as? [String: Any], let hash = p["hash"] as? String {
+                let pinned = p["pinned"] as? Bool ?? true
+                if let index = clipboardItems.firstIndex(where: { $0.hash == hash }) {
+                    clipboardItems[index].pinned = pinned
+                }
+            }
 
         case "clipboard_clear":
             clipboardItems = []
@@ -446,7 +479,9 @@ final class GoonDropClient: NSObject, ObservableObject {
             text: text,
             timestamp: dict["timestamp"] as? Int ?? now(),
             sourceDeviceName: dict["sourceDeviceName"] as? String ?? "Device",
-            kind: dict["type"] as? String ?? (text.hasPrefix("http") ? "url" : "text")
+            kind: dict["type"] as? String ?? (text.hasPrefix("http") ? "url" : "text"),
+            hash: dict["hash"] as? String ?? "",
+            pinned: dict["pinned"] as? Bool ?? false
         )
     }
 
