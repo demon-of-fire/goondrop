@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Network
 
 /// Raw UDP broadcast discovery that finds Goon Drop PC servers on the same Wi-Fi.
 ///
@@ -23,6 +24,7 @@ enum LANDiscovery {
         let lock = NSLock()
         var broadcastResults: [DiscoveredServer] = []
         var scanResults: [DiscoveredServer] = []
+        var bonjourResults: [DiscoveredServer] = []
 
         queue.async {
             broadcastResults = broadcastDiscover(timeout: timeout)
@@ -32,7 +34,12 @@ enum LANDiscovery {
             scanResults = httpSubnetScan()
             semaphore.signal()
         }
+        queue.async {
+            bonjourResults = bonjourDiscover(timeout: timeout)
+            semaphore.signal()
+        }
 
+        semaphore.wait()
         semaphore.wait()
         semaphore.wait()
 
@@ -40,12 +47,76 @@ enum LANDiscovery {
         defer { lock.unlock() }
         var seen = Set<String>()
         var merged: [DiscoveredServer] = []
-        for server in broadcastResults + scanResults {
+        for server in bonjourResults + broadcastResults + scanResults {
             if seen.insert(server.id).inserted {
                 merged.append(server)
             }
         }
         return merged
+    }
+
+    // MARK: - Bonjour / mDNS discovery
+
+    /// Find Goon Drop PCs advertising `_goondrop._tcp` via NWBrowser, then resolve
+    /// each service to an IP:port. Best-effort: returns what resolves in time.
+    private static func bonjourDiscover(timeout: TimeInterval) -> [DiscoveredServer] {
+        let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        let queue = DispatchQueue(label: "goondrop.bonjour")
+        var found: [DiscoveredServer] = []
+
+        func add(_ server: DiscoveredServer) {
+            lock.lock()
+            if !found.contains(where: { $0.id == server.id }) { found.append(server) }
+            lock.unlock()
+        }
+
+        let browser = NWBrowser(for: .bonjour(type: "_goondrop._tcp", domain: nil), using: .tcp)
+        browser.browseResultsChangedHandler = { results, _ in
+            for result in results {
+                guard case let .service(name, _, _, _) = result.endpoint else { continue }
+
+                var code = ""
+                var serverName = ""
+                if case let .bonjour(txt) = result.metadata {
+                    code = txt["pairingCode"] ?? ""
+                    serverName = txt["serverName"] ?? ""
+                }
+                let resolvedName = serverName.isEmpty ? name : serverName
+
+                let connection = NWConnection(to: result.endpoint, using: .tcp)
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        if let remote = connection.currentPath?.remoteEndpoint,
+                           case let .hostPort(host, port) = remote {
+                            let raw = "\(host)"
+                            let ip = raw.components(separatedBy: "%").first ?? raw
+                            add(DiscoveredServer(ip: ip, port: Int(port.rawValue),
+                                                 pairingCode: code, serverName: resolvedName))
+                        }
+                        connection.cancel()
+                    case .failed, .cancelled:
+                        connection.cancel()
+                    default:
+                        break
+                    }
+                }
+                connection.start(queue: queue)
+            }
+        }
+        browser.stateUpdateHandler = { _ in }
+        browser.start(queue: queue)
+
+        queue.asyncAfter(deadline: .now() + timeout) {
+            browser.cancel()
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        lock.lock()
+        defer { lock.unlock() }
+        return found
     }
 
     // MARK: - UDP broadcast discovery (existing path)

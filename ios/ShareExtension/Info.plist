@@ -27,6 +27,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_goondrop._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Goon Drop needs local network access to send shared items directly to your Windows PC over Wi-Fi.</string>
 	<key>NSExtension</key>

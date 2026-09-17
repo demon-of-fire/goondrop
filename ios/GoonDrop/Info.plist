@@ -33,6 +33,7 @@
 	<array>
 		<string>_http._tcp</string>
 		<string>_https._tcp</string>
+		<string>_goondrop._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Goon Drop needs camera access to scan pairing QR codes from your PC.</string>

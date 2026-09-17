@@ -21,6 +21,7 @@ import { generateId, getMachineName } from './utils';
 import { getOrCreateCertificates } from './certs';
 import { PushManager } from './pushManager';
 import { createShortcutFiles } from './shortcuts';
+import { Bonjour } from 'bonjour-service';
 
 function shutdown(): void {
   console.log('[NOTIFY] Shutting down server...');
@@ -479,6 +480,33 @@ async function main(): Promise<void> {
 
    process.on('SIGINT', shutdown);
    process.on('SIGTERM', shutdown);
+
+   // 📡 Bonjour / mDNS advertisement so iOS can discover the PC with NWBrowser
+   // (no subnet sweep needed) via the `_goondrop._tcp` service type.
+   let bonjour: Bonjour | null = null;
+   try {
+     bonjour = new Bonjour();
+     const service = bonjour.publish({
+       name: `Goon Drop (${getMachineName()})`,
+       type: 'goondrop',
+       port: config.port + 1,
+       txt: {
+         pairingCode: config.pairingCode,
+         serverName: getMachineName(),
+         version: '1.0.0',
+         httpPort: String(config.port),
+       },
+     });
+     service.on('error', (err: any) => {
+       console.warn(`[MDNS] Bonjour advertise error: ${err?.message ?? err}`);
+     });
+     console.log(`[MDNS] Advertising _goondrop._tcp on port ${config.port + 1}`);
+   } catch (err: any) {
+     console.warn(`[MDNS] Bonjour unavailable: ${err?.message ?? err}`);
+   }
+   process.on('exit', () => {
+     try { bonjour?.destroy(); } catch { }
+   });
 
    // Self-Healing Dynamic IP change detector (New!)
    let lastKnownIp = config.localIp;
