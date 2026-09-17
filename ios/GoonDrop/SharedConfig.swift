@@ -98,6 +98,10 @@ public class SharedConfig: ObservableObject {
         URL(string: "\(baseURLString)/api/drop")
     }
     
+    public var apiDropResumeURL: URL? {
+        URL(string: "\(baseURLString)/api/drop/resume")
+    }
+    
     public var apiHandoffURL: URL? {
         URL(string: "\(baseURLString)/api/handoff")
     }

@@ -20,8 +20,11 @@ final class GoonDropClient: NSObject, ObservableObject {
     @Published var devices: [GoonDevice] = []
     @Published var clipboardItems: [GoonClipboard] = []
     @Published var links: [GoonLink] = []
+    @Published var transfers: [FileTransferOut] = []
     @Published var statusMessage: String?
     @Published var lastError: String?
+
+    private var uploaders: [String: Uploader] = [:]
 
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
@@ -255,34 +258,135 @@ final class GoonDropClient: NSObject, ObservableObject {
         }
     }
 
-    /// Multipart upload to the PC's drop zone.
+    /// Stream a file from disk to the PC's drop zone, reporting live progress and
+    /// resuming a partial upload when the PC already holds some of the bytes.
+    func dropFile(url: URL, fileName: String, mimeType: String, completion: @escaping (Bool) -> Void) {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        beginUpload(fileURL: url, data: nil, fileName: fileName, mimeType: mimeType,
+                    size: size, completion: completion)
+    }
+
+    /// In-memory variant (photos, small payloads).
     func dropFile(data: Data, fileName: String, mimeType: String, completion: @escaping (Bool) -> Void) {
-        guard let url = SharedConfig.shared.apiDropURL else {
-            completion(false)
-            return
+        beginUpload(fileURL: nil, data: data, fileName: fileName, mimeType: mimeType,
+                    size: Int64(data.count), completion: completion)
+    }
+
+    func cancelTransfer(id: String) {
+        uploaders[id]?.cancel()
+        uploaders[id] = nil
+        if let index = transfers.firstIndex(where: { $0.id == id }) {
+            transfers.remove(at: index)
         }
-        let boundary = "Boundary-\(UUID().uuidString)"
+    }
+
+    private func beginUpload(fileURL: URL?, data: Data?, fileName: String, mimeType: String,
+                             size: Int64, completion: @escaping (Bool) -> Void) {
+        guard let url = SharedConfig.shared.apiDropURL else { completion(false); return }
+        let transferId = UUID().uuidString
+        let transfer = FileTransferOut(id: transferId, fileName: fileName,
+                                       bytesSent: 0, totalBytes: size, state: .waiting)
+        transfers.append(transfer)
+
+        // For anything sizeable, ask the PC how many bytes it already has so we
+        // only re-send the remainder (lets a dropped Wi-Fi connection resume).
+        let shouldResume = size > 1_000_000
+        resumeOffset(for: fileName, size: size, enabled: shouldResume) { [weak self] offset in
+            guard let self = self else { return }
+            guard let index = self.transfers.firstIndex(where: { $0.id == transferId }) else { return }
+            self.transfers[index].state = .uploading
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            request.setValue(fileName, forHTTPHeaderField: "x-filename")
+            let code = SharedConfig.shared.pairingCode
+            if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
+
+            var uploadData = data
+            var uploadFile = fileURL
+            if offset > 0 && offset < size {
+                if size > 0 { request.setValue(String(size), forHTTPHeaderField: "x-total-size") }
+                request.setValue("true", forHTTPHeaderField: "x-resume")
+                if let fileURL = fileURL {
+                    uploadFile = self.tailTempFile(of: fileURL, from: offset)
+                    uploadData = nil
+                } else if let data = data {
+                    uploadData = data.subdata(in: Int(offset)..<data.count)
+                    uploadFile = nil
+                }
+            }
+            _ = mimeType
+
+            let uploader = Uploader()
+            self.uploaders[transferId] = uploader
+            uploader.start(request: request, fromFile: uploadFile, fromData: uploadData, onProgress: { _, sent, _ in
+                DispatchQueue.main.async {
+                    guard let index = self.transfers.firstIndex(where: { $0.id == transferId }) else { return }
+                    self.transfers[index].bytesSent = offset + sent
+                }
+            }, onComplete: { ok, errorText in
+                DispatchQueue.main.async {
+                    self.uploaders[transferId] = nil
+                    if let index = self.transfers.firstIndex(where: { $0.id == transferId }) {
+                        if ok {
+                            self.transfers[index].state = .done
+                            self.transfers[index].bytesSent = self.transfers[index].totalBytes
+                        } else {
+                            self.transfers[index].state = .failed(errorText ?? "Failed")
+                        }
+                    }
+                    if ok { self.statusMessage = "\(fileName) sent to PC" }
+                    completion(ok)
+                    if ok { self.clearTransferLater(id: transferId) }
+                }
+            })
+        }
+    }
+
+    /// Bytes the PC already holds for a partial upload of this file.
+    private func resumeOffset(for fileName: String, size: Int64, enabled: Bool,
+                              completion: @escaping (Int64) -> Void) {
+        guard enabled, let base = SharedConfig.shared.apiDropResumeURL else { completion(0); return }
+        var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "filename", value: fileName)]
+        guard let url = components?.url else { completion(0); return }
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpMethod = "GET"
         let code = SharedConfig.shared.pairingCode
-        if !code.isEmpty {
-            request.setValue(code, forHTTPHeaderField: "x-goondrop-code")
-        }
+        if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
+        SharedConfig.makeLANSession().dataTask(with: request) { data, _, _ in
+            var received: Int64 = 0
+            if let data = data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let value = obj["received"] as? NSNumber {
+                received = value.int64Value
+            }
+            DispatchQueue.main.async { completion(received < size ? received : 0) }
+        }.resume()
+    }
 
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
-        body.append(data)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-
-        let session = SharedConfig.makeLANSession()
-        let upload = session.uploadTask(with: request, from: body) { _, response, _ in
-            let ok = (response as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } ?? false
-            DispatchQueue.main.async { completion(ok) }
+    private func tailTempFile(of source: URL, from offset: Int64) -> URL? {
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("goondrop-resume-\(UUID().uuidString)-\(source.lastPathComponent)")
+        FileManager.default.createFile(atPath: dest.path, contents: nil)
+        guard let readHandle = try? FileHandle(forReadingFrom: source),
+              let writeHandle = try? FileHandle(forWritingTo: dest) else { return nil }
+        defer { try? readHandle.close(); try? writeHandle.close() }
+        try? readHandle.seek(toOffset: UInt64(offset))
+        while true {
+            let chunk = try? readHandle.read(upToCount: 1 << 20)
+            guard let data = chunk, !data.isEmpty else { break }
+            writeHandle.write(data)
         }
-        upload.resume()
+        return dest
+    }
+
+    private func clearTransferLater(id: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            self.transfers.removeAll { $0.id == id }
+        }
     }
 
     // MARK: - Message dispatch

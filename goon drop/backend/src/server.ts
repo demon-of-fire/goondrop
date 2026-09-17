@@ -312,6 +312,65 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     if (contentType.includes('application/octet-stream') || req.header('x-filename')) {
       const rawFileName = req.header('x-filename') || (req.query.filename as string) || `airdrop_${Date.now()}.bin`;
       const safeName = rawFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const isResume = req.header('x-resume') === 'true';
+      const totalSize = parseInt(req.header('x-total-size') || '0', 10);
+
+      // ─── Resumable upload ────────────────────────────────────────────────
+      // The client first asks how many bytes we already have, then re-sends only
+      // the remainder. Bytes accumulate in a `.part` file and are promoted to the
+      // final name once the whole file has arrived.
+      if (isResume) {
+        const partPath = path.join(saveDir, `${safeName}.part`);
+        let startByte = 0;
+        try { if (fs.existsSync(partPath)) startByte = fs.statSync(partPath).size; } catch { startByte = 0; }
+        if (totalSize > 0 && startByte > totalSize) startByte = 0;
+
+        const writeStream = fs.createWriteStream(partPath, { flags: startByte > 0 ? 'a' : 'w' });
+        let received = startByte;
+        req.on('data', (chunk) => { received += chunk.length; });
+        req.pipe(writeStream);
+
+        writeStream.on('finish', () => {
+          if (totalSize > 0 && received < totalSize) {
+            // Incomplete — keep the part file so the client can resume later.
+            res.status(202).json({ success: false, resumable: true, received, totalSize, fileName: safeName });
+            return;
+          }
+          let targetPath = path.join(saveDir, safeName);
+          let counter = 1;
+          const ext = path.extname(safeName);
+          const base = path.basename(safeName, ext);
+          while (fs.existsSync(targetPath)) {
+            targetPath = path.join(saveDir, `${base} (${counter})${ext}`);
+            counter++;
+          }
+          try { fs.renameSync(partPath, targetPath); } catch { /* cross-device fallback below */ }
+          const fileId = genId();
+          const finalName = path.basename(targetPath);
+          fileTransfer.registerLocalFile(fileId, targetPath, finalName, received);
+          console.log(`[NOTIFY] AirDropped from iPhone (resumed): ${finalName}`);
+          fileTransfer.getConnManager().broadcastToPaired({
+            type: 'file_complete',
+            payload: {
+              fileId, fileName: finalName, fileSize: received,
+              mimeType: 'application/octet-stream',
+              sourceDeviceId: 'shortcut-ios', sourceDeviceName: 'iPhone',
+              downloadUrl: `/api/files/${fileId}/${encodeURIComponent(finalName)}`
+            },
+            id: genId(), timestamp: Date.now()
+          });
+          res.json({
+            success: true, fileName: finalName, size: received,
+            downloadUrl: `/api/files/${fileId}/${encodeURIComponent(finalName)}`,
+            message: `AirDrop complete: Saved to Downloads\\GoonDrop\\${finalName}`
+          });
+        });
+        writeStream.on('error', () => {
+          res.status(500).json({ error: 'Failed to write upload to disk' });
+        });
+        return;
+      }
+
       let targetPath = path.join(saveDir, safeName);
       let counter = 1;
       const ext = path.extname(safeName);
@@ -377,6 +436,20 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     }
 
     res.status(400).json({ error: 'Unsupported Content-Type for drop' });
+  });
+
+  /** How many bytes of a resumable upload the PC already holds (0 if none). */
+  app.get('/api/drop/resume', requireCode, (req: Request, res: Response) => {
+    const saveDir = path.join(os.homedir(), 'Downloads', 'GoonDrop');
+    const safeName = String(req.query.filename || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!safeName) {
+      res.status(400).json({ error: 'A filename is required' });
+      return;
+    }
+    const partPath = path.join(saveDir, `${safeName}.part`);
+    let received = 0;
+    try { if (fs.existsSync(partPath)) received = fs.statSync(partPath).size; } catch { received = 0; }
+    res.json({ received, resumable: received > 0, fileName: safeName });
   });
 
   /** Dedicated Apple Shortcut endpoint: Fetch latest Windows clipboard */

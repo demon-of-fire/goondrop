@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import Foundation
 
 /// Send tab: photos, files, text, and links — all dropped straight onto the PC.
 struct SendView: View {
@@ -76,6 +77,40 @@ struct SendView: View {
                 .disabled(isSending || !client.isConnected)
             }
 
+            if !client.transfers.isEmpty {
+                Section("Transfers") {
+                    ForEach(client.transfers) { transfer in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(transfer.fileName)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Text(transfer.state.label)
+                                    .font(.caption)
+                                    .foregroundColor(stateColor(transfer.state))
+                            }
+                            if case .uploading = transfer.state {
+                                ProgressView(value: transfer.progress)
+                                    .tint(.accentColor)
+                                Text("\(byteString(transfer.bytesSent)) of \(byteString(transfer.totalBytes))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                client.cancelTransfer(id: transfer.id)
+                            } label: {
+                                Label("Remove", systemImage: "xmark")
+                            }
+                        }
+                    }
+                }
+            }
+
             if isSending || sendStatus != nil {
                 Section {
                     HStack {
@@ -126,16 +161,23 @@ struct SendView: View {
                         continue
                     }
                     defer { url.stopAccessingSecurityScopedResource() }
-                    if let data = try? Data(contentsOf: url) {
-                        await sendData(data, fileName: url.lastPathComponent, mimeType: mimeType(for: url.pathExtension))
-                    } else {
-                        bumpSent()
-                    }
+                    await streamFile(url)
                 }
                 finishBatch(okText: "\(totalCount) file(s) sent to PC")
             }
         case .failure:
             sendStatus = "Could not read the selected files."
+        }
+    }
+
+    private func streamFile(_ url: URL) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            client.dropFile(url: url,
+                            fileName: url.lastPathComponent,
+                            mimeType: mimeType(for: url.pathExtension)) { _ in
+                self.bumpSent()
+                cont.resume()
+            }
         }
     }
 
@@ -186,8 +228,20 @@ struct SendView: View {
         }
     }
 
-    private func mimeType(for ext: String) -> String {
-        switch ext.lowercased() {
+    private func stateColor(_ state: UploadState) -> Color {
+        switch state {
+        case .waiting: return .secondary
+        case .uploading: return .orange
+        case .done: return .green
+        case .failed: return .red
+        }
+    }
+
+    private func byteString(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func mimeType(for ext: String) -> String {        switch ext.lowercased() {
         case "jpg", "jpeg": return "image/jpeg"
         case "png": return "image/png"
         case "gif": return "image/gif"
