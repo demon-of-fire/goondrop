@@ -304,6 +304,16 @@ final class GoonDropClient: NSObject, ObservableObject {
         case "device_list":
             if let devs = payload as? [[String: Any]] { devices = parseDevices(devs) }
 
+        case "device_online", "device_offline":
+            if let p = payload as? [String: Any], let id = p["deviceId"] as? String {
+                let online = (p["online"] as? Bool) ?? (type == "device_online")
+                if let index = devices.firstIndex(where: { $0.id == id }) {
+                    devices[index].connected = online
+                    devices[index].lastSeen = Int(Date().timeIntervalSince1970 * 1000)
+                }
+                if online { DeviceStore.shared.markSeen(id: id) }
+            }
+
         case "clipboard_push":
             if let p = payload as? [String: Any], let text = p["text"] as? String {
                 prependClip(from: p, text: text)

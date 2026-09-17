@@ -12,6 +12,18 @@ interface PairedDevice {
   deviceType: string;
   token: string;
   pairedAt: number;
+  lastSeen?: number;
+  lastIp?: string;
+}
+
+export interface KnownDeviceInfo {
+  id: string;
+  name: string;
+  deviceType: string;
+  pairedAt: number;
+  lastSeen: number;
+  lastIp: string;
+  online: boolean;
 }
 
 interface PendingPairing {
@@ -300,10 +312,14 @@ export class PairingManager {
       deviceType,
       token,
       pairedAt: Date.now(),
+      lastSeen: Date.now(),
+      lastIp: client.ip,
     });
 
     // 💾 Save newly paired device list
     this.savePairedDevices();
+
+    this.broadcastDeviceStatus(client.id, true);
 
     // Confirm to the new device
     this.conn.send(client, {
@@ -354,6 +370,14 @@ public handlePairConfirm(client: Client, deviceId: string, token: string, device
     // Token matches known paired device -- silently re-authenticate
     const reconnected = this.conn.rekeyClient(client.id, deviceId, deviceName || existing.name, existing.deviceType, token);
     if (!reconnected) return;
+
+    // Refresh the registry so "last seen" and the device's live IP stay current.
+    existing.name = deviceName || existing.name;
+    existing.lastSeen = Date.now();
+    existing.lastIp = client.ip;
+    this.pairedDevices.set(deviceId, existing);
+    this.savePairedDevices();
+    this.broadcastDeviceStatus(deviceId, true);
 
     // Send paired confirmation
     this.conn.send(client, {
@@ -482,4 +506,77 @@ public handlePairConfirm(client: Client, deviceId: string, token: string, device
   getPairedDevices(): PairedDevice[] {
     return Array.from(this.pairedDevices.values());
   }
+
+  /** Announce a device coming online/offline so other paired devices can react. */
+  public broadcastDeviceStatus(deviceId: string, online: boolean): void {
+    const device = this.pairedDevices.get(deviceId);
+    if (!device) return;
+    this.conn.broadcast({
+      type: online ? 'device_online' : 'device_offline',
+      payload: {
+        deviceId,
+        name: device.name,
+        deviceType: device.deviceType,
+        online,
+      },
+      id: generateId(),
+      timestamp: Date.now(),
+    });
+  }
+
+  /** Registry of every PC-side paired device, merged with live connection state.
+   *  Unlike conn.getDeviceList(), this includes remembered devices that are
+   *  currently offline, so the app can show its full device list. */
+  public listKnownDevices(): KnownDeviceInfo[] {
+    const live = new Map(this.conn.getDeviceList().map(d => [d.id, d]));
+    return Array.from(this.pairedDevices.values())
+      .map(device => {
+        const client = live.get(device.id);
+        return {
+          id: device.id,
+          name: client?.name || device.name,
+          deviceType: device.deviceType,
+          pairedAt: device.pairedAt,
+          lastSeen: client?.lastSeen || device.lastSeen || device.pairedAt,
+          lastIp: device.lastIp || '',
+          online: !!client && client.connected,
+        };
+      })
+      .sort((a, b) => b.lastSeen - a.lastSeen);
+  }
+
+  /** Rename a remembered device from the PC side. */
+  public renameDevice(deviceId: string, name: string): boolean {
+    const device = this.pairedDevices.get(deviceId);
+    if (!device) return false;
+    const sanitized = name.trim().substring(0, 30);
+    if (sanitized) device.name = sanitized;
+    this.pairedDevices.set(deviceId, device);
+    savePairedDevicesSnapshot(this.configPath, this.pairingCode, this.pairedDevices);
+    const client = this.conn.getClient(deviceId);
+    if (client) client.name = device.name;
+    this.conn.broadcast({
+      type: 'device_list',
+      payload: this.conn.getDeviceList(),
+      id: generateId(),
+      timestamp: Date.now(),
+    });
+    return true;
+  }
+}
+
+/** Persist the registry snapshot. Shared by renameDevice so it can run without
+ *  duplicating the private savePairedDevices logic. */
+function savePairedDevicesSnapshot(
+  configPath: string,
+  pairingCode: string,
+  devices: Map<string, PairedDevice>,
+): void {
+  try {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+      pairingCode,
+      pairedDevices: Array.from(devices.values()),
+    }, null, 2), 'utf8');
+  } catch { }
 }

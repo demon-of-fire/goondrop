@@ -213,7 +213,16 @@ export class ConnectionManager {
 
   /** Remove a disconnected client */
   removeClient(id: string): void {
+    const client = this.clients.get(id);
     this.clients.delete(id);
+    if (client?.paired) {
+      this.broadcast({
+        type: 'device_offline',
+        payload: { deviceId: id, name: client.name, deviceType: client.deviceType, online: false },
+        id: generateId(),
+        timestamp: Date.now(),
+      });
+    }
     this.broadcast({
       type: 'device_list',
       payload: this.getDeviceList(),

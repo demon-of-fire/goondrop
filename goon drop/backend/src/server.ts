@@ -178,9 +178,34 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     }
   });
 
+  /** Registry of every device this PC has paired with (online + remembered offline). */
+  app.get('/api/devices', requireCode, (_req: Request, res: Response) => {
+    res.json({
+      serverName: getMachineName(),
+      devices: pairingManager.listKnownDevices(),
+      connectedDevices: getConnectedCount(),
+    });
+  });
+
+  /** Revoke a paired device so it must pair again (e.g. lost/stolen phone). */
+  app.post('/api/devices/:deviceId/revoke', requireCode, (req: Request, res: Response) => {
+    const removed = pairingManager.revokeDevice(req.params.deviceId);
+    res.json({ ok: removed, deviceId: req.params.deviceId });
+  });
+
+  /** Rename a remembered device from the PC side. */
+  app.post('/api/devices/:deviceId/rename', requireCode, (req: Request, res: Response) => {
+    const name = String(req.body?.name || '');
+    if (!name.trim()) {
+      res.status(400).json({ error: 'A device name is required' });
+      return;
+    }
+    const ok = pairingManager.renameDevice(req.params.deviceId, name);
+    res.json({ ok, deviceId: req.params.deviceId, name: name.trim().substring(0, 30) });
+  });
+
   /** Serve uploaded files for download */
-  app.get('/api/files/:fileId/:fileName', (req: Request, res: Response) => {
-    const { fileId, fileName } = req.params;
+  app.get('/api/files/:fileId/:fileName', (req: Request, res: Response) => {    const { fileId, fileName } = req.params;
     const file = fileTransfer.getTransferFile(fileId);
 
     if (!file) {
