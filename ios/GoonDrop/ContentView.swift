@@ -25,6 +25,10 @@ struct ContentView: View {
                     .tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
                     .tag(2)
 
+                ControlView()
+                    .tabItem { Label("Control", systemImage: "cursorarrow.click.2") }
+                    .tag(4)
+
                 HandoffView()
                     .tabItem { Label("Handoff", systemImage: "link") }
                     .tag(3)

@@ -389,6 +389,76 @@ final class GoonDropClient: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - PC remote control
+
+    private func sendControl(_ type: String, _ payload: [String: Any] = [:]) -> Bool {
+        guard isConnected else {
+            statusMessage = "Connect to your PC first"
+            return false
+        }
+        sendJSON(envelope(type, payload))
+        return true
+    }
+
+    /// Relative mouse movement (dx/dy are a fraction of the touchpad size).
+    func mouseMove(dx: Double, dy: Double) {
+        _ = sendControl("mouse_move", ["dx": dx, "dy": dy])
+    }
+
+    func mouseClick(left: Bool) {
+        if sendControl("mouse_click", ["clickType": left ? "left" : "right"]) {
+            statusMessage = left ? "Clicked" : "Right-clicked"
+        }
+    }
+
+    static let mediaCommands: [String: String] = [
+        "volume_up": "Volume up",
+        "volume_down": "Volume down",
+        "volume_mute": "Mute",
+        "media_play": "Play / pause",
+        "media_next": "Next track",
+        "media_prev": "Previous track"
+    ]
+
+    func mediaCommand(_ command: String) {
+        if sendControl("media_command", ["command": command]) {
+            statusMessage = GoonDropClient.mediaCommands[command] ?? command
+        }
+    }
+
+    /// Type text on the PC as if typed at its keyboard.
+    func typeOnPC(_ text: String) {
+        guard !text.isEmpty else { return }
+        if sendControl("keyboard_type", ["text": text]) {
+            statusMessage = "Typed on PC"
+        }
+    }
+
+    func lockPC() {
+        if sendControl("lock_pc") { statusMessage = "PC locked" }
+    }
+
+    func sleepPC() {
+        if sendControl("sleep_pc") { statusMessage = "PC going to sleep" }
+    }
+
+    func restartPC() {
+        if sendControl("restart_pc") { statusMessage = "PC restarting" }
+    }
+
+    func shutdownPC() {
+        if sendControl("shutdown_pc") { statusMessage = "PC shutting down" }
+    }
+
+    /// Find My PC — makes the machine beep and show a balloon so you can locate it.
+    func pingPC() {
+        if sendControl("ping_pc") { statusMessage = "Pinging PC…" }
+    }
+
+    func openWindowsUpdate() {
+        if sendControl("update_pc") { statusMessage = "Opening Windows Update" }
+    }
+
     // MARK: - Message dispatch
 
     private func handleRawMessage(_ text: String) {
