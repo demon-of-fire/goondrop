@@ -25,6 +25,13 @@ vapid-keys.json
 clipboard_history.json
 goondrop-port.txt
 
+# At-rest encryption key & device token registry
+.goondrop.key
+paired_devices.json
+links.json
+chat_history.json
+checklist.json
+
 # Build output
 ios/build/
 *.xcarchive

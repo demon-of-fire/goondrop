@@ -3,6 +3,7 @@ import type { ConnectionManager, Client } from './websocket';
 import { generateId, getMachineName } from './utils';
 import { PushManager } from './pushManager';
 import { loadJson, saveJson } from './storage';
+import { encryptJson, decryptJson } from './crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -109,7 +110,9 @@ export class PairingManager {
   private loadPairedDevices(): void {
     try {
       if (fs.existsSync(this.configPath)) {
-        const data = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        const raw = fs.readFileSync(this.configPath, 'utf8').trim();
+        const data = decryptJson<{ pairingCode?: string; pairedDevices?: PairedDevice[] }>(raw)
+          ?? JSON.parse(raw) as { pairingCode?: string; pairedDevices?: PairedDevice[] };
         if (data && data.pairingCode) this.pairingCode = data.pairingCode;
         if (data && data.pairedDevices && Array.isArray(data.pairedDevices)) {
           data.pairedDevices.forEach((dev: PairedDevice) => {
@@ -131,10 +134,10 @@ export class PairingManager {
     try {
       const list = Array.from(this.pairedDevices.values());
       fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
-      fs.writeFileSync(this.configPath, JSON.stringify({ 
-        pairingCode: this.pairingCode, 
-        pairedDevices: list 
-      }, null, 2), 'utf8');
+      fs.writeFileSync(this.configPath, encryptJson({
+        pairingCode: this.pairingCode,
+        pairedDevices: list
+      }), 'utf8');
     } catch { }
   }
 
