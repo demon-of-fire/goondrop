@@ -184,6 +184,7 @@ private enum PowerAction: Identifiable {
         }
     }
 
+    @MainActor
     func run(with client: GoonDropClient) {
         switch self {
         case .sleep: client.sleepPC()
