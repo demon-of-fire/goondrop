@@ -90,9 +90,7 @@ final class SoundPlayer {
 
     func play(_ tone: Tone) {
         configureIfNeeded()
-        guard engine.isRunning else {
-            try? engine.start()
-        }
+        if !engine.isRunning { try? engine.start() }
         guard let buffer = makeBuffer(notes: tone.notes) else { return }
         // Duck whatever else is playing briefly so the confirmation is audible.
         try? AVAudioSession.sharedInstance().setActive(true, options: [])
