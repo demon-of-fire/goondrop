@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var port = ""
     @State private var code = ""
     @State private var useHttps = true
+    @State private var passcode = ""
     @State private var isScanning = false
     @State private var discovered: [DiscoveredServer] = []
     @State private var scanMessage: String?
@@ -105,6 +106,17 @@ struct SettingsView: View {
                     .font(.headline)
                 }
 
+                Section {
+                    SecureField("Room passcode (optional)", text: $passcode)
+                        .textContentType(.password)
+                } header: {
+                    Text("Encryption")
+                } footer: {
+                    Text(passcode.isEmpty
+                         ? "Leave blank to send chat, notes, checklist and links in plain text."
+                         : "Must match the room passcode in the web app's settings. Chat, notes, checklist and links are then encrypted between your devices.")
+                }
+
                 Section("Share Sheet") {
                     Text("Your photos, files, links and text shared from any app go straight to this PC (\(config.serverHost):\(config.serverPort)).")
                         .font(.footnote)
@@ -131,6 +143,7 @@ struct SettingsView: View {
                 port = String(config.serverPort)
                 useHttps = config.useHttps
                 code = config.pairingCode
+                passcode = config.roomPasscode
             }
         }
     }
@@ -159,6 +172,7 @@ struct SettingsView: View {
         }
         config.useHttps = useHttps
         config.pairingCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.roomPasscode = passcode
         client.connect()
         dismiss()
     }

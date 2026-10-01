@@ -10,6 +10,9 @@ struct DevicesView: View {
     @State private var isScanning = false
     @State private var discovered: [DiscoveredServer] = []
     @State private var scanError: String?
+    @State private var renaming: GoonDevice?
+    @State private var renameDraft = ""
+    @State private var unpairTarget: GoonDevice?
 
     private let accent = Color(red: 0.0, green: 0.9, blue: 0.63)
 
@@ -330,9 +333,15 @@ struct DevicesView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(device.name)
                                 .font(.body.weight(.medium))
-                            Text(device.paired ? "Paired" : "Unpaired")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            HStack(spacing: 6) {
+                                Text(device.paired ? "Paired" : "Unpaired")
+                                if let level = client.deviceBattery[device.name] {
+                                    Text("· \(level)%")
+                                        .foregroundColor(level <= 20 ? .red : .secondary)
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         }
                         Spacer()
                         Text(device.connected ? "Online" : "Offline")
@@ -342,8 +351,43 @@ struct DevicesView: View {
                     .padding(12)
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .contextMenu {
+                        Button {
+                            renaming = device
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            unpairTarget = device
+                        } label: {
+                            Label("Remove device", systemImage: "trash")
+                        }
+                    }
                 }
             }
+        }
+        .alert("Rename device", isPresented: Binding(
+            get: { renaming != nil },
+            set: { if !$0 { renaming = nil } }
+        )) {
+            TextField("Name", text: $renameDraft)
+            Button("Save") {
+                if let device = renaming { client.renameDevice(device, to: renameDraft) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .alert("Remove device?", isPresented: Binding(
+            get: { unpairTarget != nil },
+            set: { if !$0 { unpairTarget = nil } }
+        )) {
+            Button("Remove", role: .destructive) {
+                if let device = unpairTarget { client.unpairDevice(device) }
+                unpairTarget = nil
+            }
+            Button("Cancel", role: .cancel) { unpairTarget = nil }
+        } message: {
+            Text(unpairTarget.map { "\($0.name) will have to be paired again." } ?? "")
         }
     }
 

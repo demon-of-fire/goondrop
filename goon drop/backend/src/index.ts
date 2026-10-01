@@ -21,6 +21,7 @@ import { generateId, getMachineName } from './utils';
 import { getOrCreateCertificates } from './certs';
 import { PushManager } from './pushManager';
 import { createShortcutFiles } from './shortcuts';
+import { MediaController } from './media';
 import { Bonjour } from 'bonjour-service';
 
 function shutdown(): void {
@@ -92,6 +93,7 @@ async function main(): Promise<void> {
   const clipboardManager = new ClipboardManager(connManager, pushManager, config.maxClipboardHistory);
   const pairingManager = new PairingManager(connManager, pushManager, () => clipboardManager.getHistory().slice(0, 20));
   const fileTransferManager = new FileTransferManager(connManager, pushManager, config.tempDir, config.maxFileSize, config.chunkSize);
+  const mediaController = new MediaController();
   
   // Register WebSocket message handlers
   pairingManager.registerHandlers();
@@ -152,6 +154,25 @@ async function main(): Promise<void> {
     });
   });
 
+  // Routine battery/charging report from a phone, so the PC sees the same
+  // device telemetry the launcher already publishes about itself.
+  connManager.on('battery_report', (client, payload: any) => {
+    const level = Number(payload?.level);
+    if (!Number.isFinite(level) || level < 0 || level > 100) return;
+    connManager.broadcastToPaired({
+      type: 'battery_info',
+      payload: {
+        level: level,
+        charging: !!payload?.charging,
+        deviceName: client.name,
+        deviceId: client.id,
+        timestamp: Date.now(),
+      },
+      id: generateId(),
+      timestamp: Date.now(),
+    }, client.id);
+  });
+
   // Native Windows remote mouse / volume control forwarding!
   const sendLocalControlCommand = (payload: any) => {
     try {
@@ -192,8 +213,35 @@ async function main(): Promise<void> {
   });
 
   connManager.on('media_command', (client, payload: any) => {
-    sendLocalControlCommand({ type: 'media', command: payload.command });
+    const command = String(payload?.command || '');
+    if (!command) return;
+    // Single dispatch path: the media controller posts to the same loopback
+    // /control endpoint as sendLocalControlCommand, so falling back here would
+    // send every command twice (double-toggling mute / play-pause).
+    mediaController.sendCommand(command);
   });
+
+  // A freshly opened app (or one reconnecting) asks for the current media state
+  // so the play/pause button and now-playing card are correct immediately.
+  connManager.on('media_state_request', (client) => {
+    connManager.send(client, {
+      type: 'media_state',
+      payload: mediaController.getState(),
+      id: generateId(),
+      timestamp: Date.now(),
+    });
+  });
+
+  // Push the launcher's real media state to every paired device on change.
+  mediaController.setOnChange((state) => {
+    connManager.broadcastToPaired({
+      type: 'media_state',
+      payload: state,
+      id: generateId(),
+      timestamp: Date.now(),
+    });
+  });
+  mediaController.start();
 
   // Native Windows remote keyboard tying forwarding!
   connManager.on('keyboard_type', (client, payload: any) => {
@@ -344,7 +392,7 @@ async function main(): Promise<void> {
    });
 
    // Create Express app
-   const app = createServer(config, fileTransferManager, clipboardManager, pairingManager, pushManager);
+   const app = createServer(config, fileTransferManager, clipboardManager, pairingManager, pushManager, mediaController);
 
    // Setup HTTPS certificates for Secure WebSocket (WSS) and PWA notifications.
    // HTTP remains available for the local Windows launcher, but iPhones must use HTTPS.

@@ -549,11 +549,14 @@ final class ShareViewController: UIViewController {
 
     private func deliver(_ payload: Payload, item: SharedItem, completion: @escaping (Bool, String?) -> Void) {
         guard let target = target else { completion(false, "No PC"); return }
+        // Match the app and the web client: when a room passcode is set, shared
+        // text and links go out encrypted so every device reads them the same way.
+        let key = SharedConfig.shared.encryptionKey
         switch payload {
         case .url(let url):
-            postJSON(target, "/api/handoff", ["url": url.absoluteString], completion)
+            postJSON(target, "/api/handoff", ["url": E2EECipher.encrypt(url.absoluteString, key: key)], completion)
         case .text(let text):
-            postJSON(target, "/api/clipboard", ["text": text], completion)
+            postJSON(target, "/api/clipboard", ["text": E2EECipher.encrypt(text, key: key)], completion)
         case .file(let data, let name, let mime):
             postMultipart(target, data: data, fileName: name, mimeType: mime, completion)
         }

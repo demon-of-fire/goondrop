@@ -44,15 +44,45 @@ struct ControlView: View {
             }
 
             Section("Media & volume") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                    mediaButton("playpause.fill", "media_play")
+                HStack(spacing: 10) {
+                    // Same single play/pause button as the Media tab, driven by the
+                    // PC's real reported state rather than a blind toggle.
+                    Button {
+                        client.togglePlayPause()
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: client.mediaState.playing ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20))
+                            Text(client.mediaState.playing ? "Pause" : "Play")
+                                .font(.caption2.weight(.medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.accentColor.opacity(0.16))
+                        .foregroundColor(Color.accentColor)
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!client.isConnected)
+
                     mediaButton("backward.end.fill", "media_prev")
                     mediaButton("forward.end.fill", "media_next")
+                }
+
+                HStack(spacing: 10) {
                     mediaButton("speaker.wave.2.fill", "volume_up")
                     mediaButton("speaker.wave.1.fill", "volume_down")
-                    mediaButton("speaker.slash.fill", "volume_mute")
+                    mediaButton(client.mediaState.volumeMuted ? "speaker.slash.fill" : "speaker.wave.2.bubble.fill",
+                                "volume_mute_toggle")
                 }
-                .padding(.vertical, 4)
+                .padding(.top, 4)
+
+                NavigationLink {
+                    MediaView()
+                } label: {
+                    Label("Now playing & mic", systemImage: "play.circle.fill")
+                        .font(.footnote)
+                }
             }
 
             Section {

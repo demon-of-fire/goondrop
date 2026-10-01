@@ -23,19 +23,22 @@ struct ContentView: View {
 
                 ReceiveView()
                     .tabItem { Label("Receive", systemImage: "tray.and.arrow.down.fill") }
-                    .tag(5)
+                    .tag(2)
 
                 ClipboardView()
                     .tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
-                    .tag(2)
+                    .tag(3)
 
-                ControlView()
-                    .tabItem { Label("Control", systemImage: "cursorarrow.click.2") }
+                MediaView()
+                    .tabItem { Label("Media", systemImage: "play.circle.fill") }
                     .tag(4)
 
-                HandoffView()
-                    .tabItem { Label("Handoff", systemImage: "link") }
-                    .tag(3)
+                // Chat, Notes, Handoff, Control, Diagnostics and Settings live
+                // behind one More row: iOS silently pushes tab 6+ into a system
+                // "More" menu, which would hide Control.
+                MoreView()
+                    .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
+                    .tag(5)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 ConnectionHeader()
@@ -55,6 +58,16 @@ struct ContentView: View {
         .tint(accent)
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView()
+        }
+        .alert("Everything was wiped", isPresented: $client.pendingWipeAlert) {
+            Button("OK") { client.acknowledgeWipe() }
+        } message: {
+            Text("The clipboard history, chat, notes and checklist were cleared on your PC and on every paired device.")
+        }
+        .alert("Find My Phone", isPresented: $client.pingPhoneAlert) {
+            Button("OK") { client.acknowledgePing() }
+        } message: {
+            Text("Your other Goon Drop device is looking for this iPhone.")
         }
         .onAppear {
             NotificationHelper.requestAuthorizationIfNeeded()

@@ -1253,6 +1253,24 @@ public partial class Form1 : Form
 
     public void SendMediaCommand(string command)
     {
+        // Mute toggles go through Core Audio rather than a synthetic keypress so
+        // the launcher can report the real resulting state back to the phone.
+        if (command == "mic_toggle")
+        {
+            if (MediaState.GetMicMute(out bool micMuted)) MediaState.SetMicMute(!micMuted);
+            return;
+        }
+        if (command == "mic_mute") { MediaState.SetMicMute(true); return; }
+        if (command == "mic_unmute") { MediaState.SetMicMute(false); return; }
+
+        if (command == "volume_mute_toggle")
+        {
+            if (MediaState.GetSpeakerMute(out bool spkMuted)) MediaState.SetSpeakerMute(!spkMuted);
+            return;
+        }
+        if (command == "volume_mute_set") { MediaState.SetSpeakerMute(true); return; }
+        if (command == "volume_unmute") { MediaState.SetSpeakerMute(false); return; }
+
         byte vk = 0;
         if (command == "volume_up") vk = VK_VOLUME_UP;
         else if (command == "volume_down") vk = VK_VOLUME_DOWN;
@@ -1601,6 +1619,16 @@ public partial class Form1 : Form
                             } catch { }
                         }
                         var json = JsonSerializer.Serialize(procList);
+                        var buffer = Encoding.UTF8.GetBytes(json);
+                        resp.ContentType = "application/json";
+                        resp.ContentLength64 = buffer.Length;
+                        resp.OutputStream.Write(buffer, 0, buffer.Length);
+                    }
+                    else if (req.Url!.PathAndQuery.Contains("/control/media-state") && req.HttpMethod == "GET")
+                    {
+                        // Real playback / mute snapshot. The backend polls this so the
+                        // phone's play-pause button reflects actual PC state.
+                        var json = JsonSerializer.Serialize(MediaState.Capture());
                         var buffer = Encoding.UTF8.GetBytes(json);
                         resp.ContentType = "application/json";
                         resp.ContentLength64 = buffer.Length;

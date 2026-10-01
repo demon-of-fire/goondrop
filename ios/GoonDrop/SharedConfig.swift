@@ -22,6 +22,7 @@ public class SharedConfig: ObservableObject {
     private let keyAutoSend    = "goondrop_auto_send"
     private let keyServerName  = "goondrop_server_name"
     private let keyConfigured  = "goondrop_configured"
+    private let keyRoomPasscode = "goondrop_room_passcode"
     
     @Published public var serverHost: String {
         didSet {
@@ -66,6 +67,17 @@ public class SharedConfig: ObservableObject {
             defaults.set(isConfigured, forKey: keyConfigured)
         }
     }
+
+    /// Shared "room passcode" matching the web app's `goondrop_e2ee_key`.
+    /// Leave it empty on both sides to disable text encryption entirely.
+    @Published public var roomPasscode: String {
+        didSet {
+            defaults.set(roomPasscode, forKey: keyRoomPasscode)
+        }
+    }
+
+    /// Convenience for the cipher call sites scattered across the client.
+    public var encryptionKey: String { roomPasscode }
     
     private init() {
         let defs = UserDefaults(suiteName: SharedConfig.appGroupName) ?? UserDefaults.standard
@@ -76,7 +88,8 @@ public class SharedConfig: ObservableObject {
         let auto = defs.object(forKey: keyAutoSend) as? Bool ?? true
         let name = defs.string(forKey: keyServerName) ?? ""
         let configured = defs.object(forKey: keyConfigured) as? Bool ?? false
-        
+        let passcode = defs.string(forKey: keyRoomPasscode) ?? ""
+
         self.serverHost = host
         self.serverPort = port > 0 ? port : 3942
         self.useHttps = https
@@ -84,6 +97,7 @@ public class SharedConfig: ObservableObject {
         self.autoSend = auto
         self.serverName = name
         self.isConfigured = configured
+        self.roomPasscode = passcode
     }
     
     public var baseURLString: String {
@@ -118,6 +132,16 @@ public class SharedConfig: ObservableObject {
     
     public var apiHealthURL: URL? {
         URL(string: "\(baseURLString)/api/health")
+    }
+
+    /// Real playback / mute state read from the Windows launcher. Used as a
+    /// fallback while the WebSocket is still pairing.
+    public var apiMediaStateURL: URL? {
+        URL(string: "\(baseURLString)/api/media/state")
+    }
+
+    public var apiNoteURL: URL? {
+        URL(string: "\(baseURLString)/api/note")
     }
     
     /// Create a URLSession configured to trust local self-signed certificates for LAN transfer

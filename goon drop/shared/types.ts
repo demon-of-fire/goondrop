@@ -52,12 +52,60 @@ export enum MessageType {
    WEBRTC_ANSWER = 'webrtc_answer',
    WEBRTC_ICE_CANDIDATE = 'webrtc_ice_candidate',
 
-   // Windows System Control
-   LOCK_PC = 'lock_pc',
-   SLEEP_PC = 'sleep_pc',
-   SHUTDOWN_PC = 'shutdown_pc',
-   RESTART_PC = 'restart_pc',
-   UPDATE_PC = 'update_pc',
+  // Windows System Control
+  LOCK_PC = 'lock_pc',
+  SLEEP_PC = 'sleep_pc',
+  SHUTDOWN_PC = 'shutdown_pc',
+  RESTART_PC = 'restart_pc',
+  UPDATE_PC = 'update_pc',
+
+  // Media / audio state (read back from the Windows launcher)
+  MEDIA_STATE = 'media_state',
+  MEDIA_STATE_REQUEST = 'media_state_request',
+
+  // Device telemetry pushed from a phone
+  BATTERY_REPORT = 'battery_report',
+  BATTERY_INFO = 'battery_info',
+
+  // LAN chat
+  CHAT_MESSAGE = 'chat_message',
+  CHAT_HISTORY = 'chat_history',
+  CHAT_HISTORY_REQUEST = 'chat_history_request',
+
+  // Shared to-do checklist
+  CHECKLIST_UPDATE = 'checklist_update',
+
+  // Global destructive actions
+  NUCLEAR_WIPE = 'nuclear_wipe',
+}
+
+/** Media commands the Windows launcher understands. */
+export type MediaCommand =
+  | 'media_play'
+  | 'media_next'
+  | 'media_prev'
+  | 'volume_up'
+  | 'volume_down'
+  | 'volume_mute'
+  | 'volume_mute_toggle'
+  | 'volume_mute_set'
+  | 'volume_unmute'
+  | 'mic_toggle'
+  | 'mic_mute'
+  | 'mic_unmute';
+
+/** Ground truth about the PC's playback and mute state, relayed by the launcher. */
+export interface MediaStatePayload {
+  available: boolean;
+  playing: boolean;
+  notificationState: number;
+  title: string;
+  appName: string;
+  volume: number;
+  volumeMuted: boolean;
+  micMuted: boolean;
+  micVolume: number;
+  updatedAt: number;
 }
 
 // ─── Payloads ───────────────────────────────────────────────────────────────

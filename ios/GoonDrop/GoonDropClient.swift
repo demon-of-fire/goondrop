@@ -17,6 +17,9 @@ final class GoonDropClient: NSObject, ObservableObject {
     @Published var isPairing = false
     @Published var serverName = ""
     @Published var pairingCode = ""
+    /// The id the server assigned this phone; used to tell our own chat
+    /// messages and device-management actions apart from other devices'.
+    @Published private(set) var deviceId: String = ""
     @Published var devices: [GoonDevice] = []
     @Published var clipboardItems: [GoonClipboard] = []
     @Published var links: [GoonLink] = []
@@ -25,7 +28,25 @@ final class GoonDropClient: NSObject, ObservableObject {
     @Published var statusMessage: String?
     @Published var lastError: String?
 
+    // Media / audio (ground truth read from the Windows launcher)
+    @Published var mediaState = GoonMediaState.unknown
+    /// Optimistic play/pause state used for the few ms between tapping and the
+    /// launcher's read-back arriving, so the button never looks unresponsive.
+    @Published var mediaPendingCommand = false
+
+    // Shared workspace state
+    @Published var chatMessages: [GoonChatMessage] = []
+    @Published var notes: [GoonNote] = []
+    @Published var checklist: [GoonChecklistItem] = []
+    @Published var deviceBattery: [String: Int] = [:]
+
+    // Global events that need an explicit acknowledgement
+    @Published var pendingWipeAlert = false
+    @Published var pingPhoneAlert = false
+
     private var uploaders: [String: Uploader] = [:]
+    private var batteryTask: Task<Void, Never>?
+    private var mediaPollTask: Task<Void, Never>?
 
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
@@ -252,7 +273,11 @@ final class GoonDropClient: NSObject, ObservableObject {
             return
         }
         if isConnected {
-            sendJSON(envelope("link_send", ["url": trimmed, "title": trimmed]))
+            // AppContext encrypts both url and title before sending link_send.
+            let key = SharedConfig.shared.encryptionKey
+            sendJSON(envelope("link_send",
+                              ["url": E2EECipher.encrypt(trimmed, key: key),
+                               "title": E2EECipher.encrypt(trimmed, key: key)]))
             statusMessage = "Opened on PC browser"
         } else {
             postLink(trimmed)
@@ -302,6 +327,12 @@ final class GoonDropClient: NSObject, ObservableObject {
             request.httpMethod = "POST"
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             request.setValue(fileName, forHTTPHeaderField: "x-filename")
+            // The server would otherwise label every phone upload "iPhone" from a
+            // fixed shortcut id, so the real device identity travels with the bytes.
+            request.setValue(UIDevice.current.name, forHTTPHeaderField: "x-goondrop-device")
+            if !deviceId.isEmpty {
+                request.setValue(deviceId, forHTTPHeaderField: "x-goondrop-device-id")
+            }
             let code = SharedConfig.shared.pairingCode
             if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
 
@@ -416,15 +447,258 @@ final class GoonDropClient: NSObject, ObservableObject {
         "volume_up": "Volume up",
         "volume_down": "Volume down",
         "volume_mute": "Mute",
+        "volume_mute_toggle": "Toggle mute",
+        "mic_toggle": "Toggle mic",
+        "mic_mute": "Mute mic",
+        "mic_unmute": "Unmute mic",
         "media_play": "Play / pause",
         "media_next": "Next track",
         "media_prev": "Previous track"
     ]
 
-    func mediaCommand(_ command: String) {
-        if sendControl("media_command", ["command": command]) {
-            statusMessage = GoonDropClient.mediaCommands[command] ?? command
+    @discardableResult
+    func mediaCommand(_ command: String) -> Bool {
+        guard sendControl("media_command", ["command": command]) else { return false }
+        statusMessage = GoonDropClient.mediaCommands[command] ?? command
+        return true
+    }
+
+    // MARK: - Media transport & mic
+
+    /// One button that plays or pauses depending on what the PC is actually
+    /// doing right now. The icon follows the real reported state, and the
+    /// optimistic flip is reverted as soon as the launcher's read-back lands.
+    func togglePlayPause() {
+        let willPlay = !mediaState.playing
+        mediaState.playing = willPlay
+        mediaPendingCommand = true
+        SoundPlayer.shared.play(.ack)
+        if !mediaCommand("media_play") {
+            revertOptimisticPlayState()
         }
+        scheduleMediaReadback()
+    }
+
+    private func revertOptimisticPlayState() {
+        mediaPendingCommand = false
+        mediaState.playing = !mediaState.playing
+    }
+
+    func skipNext() { mediaCommand("media_next"); scheduleMediaReadback() }
+    func skipPrevious() { mediaCommand("media_prev"); scheduleMediaReadback() }
+    func volumeUp() { mediaCommand("volume_up"); scheduleMediaReadback(after: 0.25) }
+    func volumeDown() { mediaCommand("volume_down"); scheduleMediaReadback(after: 0.25) }
+
+    /// Toggle the PC's microphone and confirm audibly on the phone — the phone
+    /// has no way to hear the PC, so the sound is the only honest feedback.
+    func toggleMicMute() {
+        let willMute = !mediaState.micMuted
+        mediaState.micMuted = willMute
+        SoundPlayer.shared.play(willMute ? .micMuted : .micUnmuted)
+        if !mediaCommand("mic_toggle") {
+            mediaState.micMuted = !willMute
+            return
+        }
+        statusMessage = willMute ? "PC mic muted" : "PC mic live"
+        UINotificationFeedbackGenerator().notificationOccurred(willMute ? .warning : .success)
+        scheduleMediaReadback(after: 0.35)
+    }
+
+    func setMicMute(_ muted: Bool) {
+        guard mediaState.micMuted != muted else { return }
+        toggleMicMute()
+    }
+
+    func toggleSpeakerMute() {
+        let willMute = !mediaState.volumeMuted
+        mediaState.volumeMuted = willMute
+        SoundPlayer.shared.play(willMute ? .micMuted : .micUnmuted)
+        if !mediaCommand("volume_mute_toggle") {
+            mediaState.volumeMuted = !willMute
+            return
+        }
+        scheduleMediaReadback(after: 0.35)
+    }
+
+    func requestMediaState() {
+        sendJSON(envelope("media_state_request", [:]))
+    }
+
+    /// Ask the launcher to re-report. The backend also pushes state on change,
+    /// but an explicit read-back right after a command keeps the UI honest even
+    /// if a push was missed.
+    private func scheduleMediaReadback(after delay: TimeInterval = 0.6) {
+        mediaPollTask?.cancel()
+        mediaPollTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.requestMediaState()
+        }
+    }
+
+    /// HTTP fallback so the media card is populated even before the WebSocket
+    /// finishes pairing.
+    func refreshMediaStateOverHTTP() {
+        guard let url = SharedConfig.shared.apiMediaStateURL else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let code = SharedConfig.shared.pairingCode
+        if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
+        Task {
+            let session = SharedConfig.makeLANSession()
+            guard let (data, _) = try? await session.data(for: request),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let available = (obj["available"] as? Bool), available else { return }
+            applyMediaState(obj)
+        }
+    }
+
+    // MARK: - Shared workspace: chat, notes, checklist
+
+    func sendChat(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Chat text is encrypted by the web client before it hits the wire, so
+        // match that here or the browser shows ciphertext.
+        sendJSON(envelope("chat_message",
+                          ["text": E2EECipher.encrypt(trimmed, key: SharedConfig.shared.encryptionKey)]))
+        // The server excludes the sender from its own broadcast, so echo the
+        // message locally to keep the thread in order.
+        chatMessages.append(GoonChatMessage(text: trimmed, timestamp: now(),
+                                            sourceDeviceId: deviceId,
+                                            sourceDeviceName: UIDevice.current.name))
+        trimChat()
+    }
+
+    func requestChatHistory() {
+        sendJSON(envelope("chat_history_request", [:]))
+    }
+
+    private func trimChat() {
+        if chatMessages.count > 200 {
+            chatMessages.removeFirst(chatMessages.count - 200)
+        }
+    }
+
+    /// Push a note to the PC and every other device. Used for quick snippets
+    /// ("here's the wifi password") without touching the clipboard.
+    func sendNote(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if sendControl("text_note",
+                        ["text": E2EECipher.encrypt(trimmed, key: SharedConfig.shared.encryptionKey)]) {
+            notes.insert(GoonNote(text: trimmed, timestamp: now(),
+                                  sourceDeviceName: UIDevice.current.name), at: 0)
+            if notes.count > 50 { notes.removeLast(notes.count - 50) }
+            statusMessage = "Note sent to PC"
+        } else {
+            postNote(trimmed)
+        }
+    }
+
+    private func postNote(_ text: String) {
+        guard let url = SharedConfig.shared.apiNoteURL else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let code = SharedConfig.shared.pairingCode
+        if !code.isEmpty { request.setValue(code, forHTTPHeaderField: "x-goondrop-code") }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": text])
+        Task { _ = try? await SharedConfig.makeLANSession().data(for: request) }
+    }
+
+    // MARK: - Shared checklist
+
+    func addChecklistItem(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        checklist.append(GoonChecklistItem(text: trimmed))
+        publishChecklist()
+    }
+
+    func toggleChecklistItem(_ item: GoonChecklistItem) {
+        guard let index = checklist.firstIndex(where: { $0.id == item.id }) else { return }
+        checklist[index].done.toggle()
+        publishChecklist()
+    }
+
+    func removeChecklistItem(_ item: GoonChecklistItem) {
+        checklist.removeAll { $0.id == item.id }
+        publishChecklist()
+    }
+
+    func clearChecklist() {
+        checklist = []
+        publishChecklist()
+    }
+
+    private func publishChecklist() {
+        // The web app treats the checklist payload as a bare array (see
+        // TextNotes.tsx sendMessage and AppContext's checklist_update case), so
+        // send an array rather than an {items: ...} envelope.
+        let key = SharedConfig.shared.encryptionKey
+        let payload: [[String: Any]] = checklist.map { item in
+            var row: [String: Any] = ["id": item.id, "done": item.done]
+            row["text"] = E2EECipher.encrypt(item.text, key: key)
+            return row
+        }
+        sendJSON(envelope("checklist_update", payload))
+        statusMessage = "Checklist updated"
+    }
+
+    // MARK: - Device management
+
+    func renameDevice(_ device: GoonDevice, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, device.id != deviceId else { return }
+        sendJSON(envelope("rename_device", ["deviceId": device.id, "name": trimmed]))
+        if let index = devices.firstIndex(where: { $0.id == device.id }) {
+            devices[index].name = trimmed
+        }
+        statusMessage = "Renamed to \(trimmed)"
+    }
+
+    func unpairDevice(_ device: GoonDevice) {
+        guard device.id != deviceId else { return }
+        sendJSON(envelope("unpair_device", ["deviceId": device.id]))
+        devices.removeAll { $0.id == device.id }
+        statusMessage = "Removed \(device.name)"
+    }
+
+    /// Clear every shared artefact on the PC and every paired device.
+    func triggerNuclearWipe() {
+        sendJSON(envelope("nuclear_wipe", [:]))
+        chatMessages = []
+        notes = []
+        checklist = []
+        statusMessage = "Everything wiped"
+    }
+
+    func acknowledgeWipe() { pendingWipeAlert = false }
+    func acknowledgePing() { pingPhoneAlert = false }
+
+    // MARK: - Battery reporting
+
+    private func startBatteryReporting() {
+        batteryTask?.cancel()
+        batteryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.reportBattery()
+                try? await Task.sleep(nanoseconds: 120_000_000_000)
+            }
+        }
+    }
+
+    private func reportBattery() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let raw = UIDevice.current.batteryLevel
+        guard raw >= 0 else { return }
+        let level = Int((raw * 100).rounded())
+        deviceBattery[UIDevice.current.name] = level
+        sendJSON(envelope("battery_report", [
+            "level": level,
+            "charging": UIDevice.current.batteryState == .charging
+        ]))
     }
 
     /// Type text on the PC as if typed at its keyboard.
@@ -490,6 +764,8 @@ final class GoonDropClient: NSObject, ObservableObject {
                 rememberCurrentDevice(from: p)
             }
             requestClipboard()
+            requestMediaState()
+            startBatteryReporting()
 
         case "init_state":
             if let p = payload as? [String: Any] {
@@ -499,10 +775,94 @@ final class GoonDropClient: NSObject, ObservableObject {
                 if let links = p["links"] as? [[String: Any]] {
                     self.links = parseLinks(links)
                 }
+                if let items = p["checklist"] as? [[String: Any]] {
+                    let key = SharedConfig.shared.encryptionKey
+                    checklist = items.compactMap { row -> GoonChecklistItem? in
+                        guard var item = GoonChecklistItem(dictionary: row) else { return nil }
+                        item.text = E2EECipher.decrypt(item.text, key: key)
+                        return item
+                    }
+                }
+                if let history = p["chatHistory"] as? [[String: Any]] {
+                    chatMessages = parseChat(history)
+                }
             }
+
+        case "media_state":
+            if let p = payload as? [String: Any] {
+                applyMediaState(p)
+            }
+
+        case "battery_info":
+            if let p = payload as? [String: Any],
+               let name = p["deviceName"] as? String,
+               let level = (p["level"] as? NSNumber)?.intValue {
+                deviceBattery[name] = level
+            }
+
+        case "chat_message":
+            if let p = payload as? [String: Any] {
+                appendChat(p)
+            }
+
+        case "chat_history":
+            if let history = payload as? [[String: Any]] {
+                chatMessages = parseChat(history)
+            }
+
+        case "text_note":
+            if let p = payload as? [String: Any], let raw = p["text"] as? String, !raw.isEmpty {
+                let text = E2EECipher.decrypt(raw, key: SharedConfig.shared.encryptionKey)
+                notes.insert(GoonNote(text: text,
+                                      timestamp: p["timestamp"] as? Int ?? now(),
+                                      sourceDeviceName: p["sourceDeviceName"] as? String ?? "PC"), at: 0)
+                if notes.count > 50 { notes.removeLast(notes.count - 50) }
+                UIPasteboard.general.string = text
+                statusMessage = "Note from PC copied to your clipboard"
+            }
+
+        case "checklist_update":
+            // The web client broadcasts the array directly as the payload; older
+            // builds wrapped it in { items: [...] }, so accept either shape.
+            var rows: [[String: Any]] = []
+            if let direct = payload as? [[String: Any]] {
+                rows = direct
+            } else if let wrapped = payload as? [String: Any] {
+                rows = (wrapped["items"] as? [[String: Any]]) ?? []
+            }
+            if !rows.isEmpty || payload is [[String: Any]] {
+                let key = SharedConfig.shared.encryptionKey
+                checklist = rows.compactMap { row in
+                    guard var item = GoonChecklistItem(dictionary: row) else { return nil }
+                    item.text = E2EECipher.decrypt(item.text, key: key)
+                    return item
+                }
+            }
+
+        case "ping_phone":
+            pingPhoneAlert = true
+            SoundPlayer.shared.play(.success)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+
+        case "nuclear_wipe":
+            clipboardItems = []
+            chatMessages = []
+            notes = []
+            checklist = []
+            links = []
+            pendingWipeAlert = true
+            statusMessage = "Everything was wiped from Goon Drop"
 
         case "device_list":
             if let devs = payload as? [[String: Any]] { devices = parseDevices(devs) }
+
+        case "device_update", "device_renamed":
+            if let p = payload as? [String: Any],
+               let id = p["deviceId"] as? String ?? (p["id"] as? String),
+               let index = devices.firstIndex(where: { $0.id == id }) {
+                if let name = p["name"] as? String, !name.isEmpty { devices[index].name = name }
+                if let online = p["online"] as? Bool { devices[index].connected = online }
+            }
 
         case "device_online", "device_offline":
             if let p = payload as? [String: Any], let id = p["deviceId"] as? String {
@@ -515,7 +875,9 @@ final class GoonDropClient: NSObject, ObservableObject {
             }
 
         case "clipboard_push":
-            if let p = payload as? [String: Any], let text = p["text"] as? String {
+            if let p = payload as? [String: Any], let raw = p["text"] as? String {
+                let text = E2EECipher.decrypt(raw, key: SharedConfig.shared.encryptionKey)
+                guard !text.isEmpty else { return }
                 receiveClipboard(from: p, text: text)
             }
 
@@ -525,7 +887,9 @@ final class GoonDropClient: NSObject, ObservableObject {
                 // The server's history is newest-first. Replaying the current
                 // clipboard after reconnect makes a missed launcher send useful
                 // instead of leaving it trapped in this screen.
-                if let newest = clips.first, let text = newest["text"] as? String, !text.isEmpty {
+                if let newest = clips.first,
+                   let raw = newest["text"] as? String, !raw.isEmpty {
+                    let text = E2EECipher.decrypt(raw, key: SharedConfig.shared.encryptionKey)
                     UIPasteboard.general.string = text
                     statusMessage = "Latest PC text copied to your clipboard"
                 }
@@ -543,7 +907,19 @@ final class GoonDropClient: NSObject, ObservableObject {
             clipboardItems = []
 
         case "link_send":
-            if let p = payload as? [String: Any] { prependLink(from: p) }
+            if let p = payload as? [String: Any] {
+                let key = SharedConfig.shared.encryptionKey
+                var link = p
+                // Decrypt on arrival so the history shows a readable URL. An
+                // unencrypted link (no passcode) passes through untouched.
+                if let url = link["url"] as? String {
+                    link["url"] = E2EECipher.decrypt(url, key: key)
+                }
+                if let title = link["title"] as? String {
+                    link["title"] = E2EECipher.decrypt(title, key: key)
+                }
+                prependLink(from: link)
+            }
 
         case "file_meta":
             if let p = payload as? [String: Any] { registerIncomingFile(p) }
@@ -619,6 +995,7 @@ final class GoonDropClient: NSObject, ObservableObject {
         let config = SharedConfig.shared
         let deviceId = (payload["deviceId"] as? String) ?? handshakeClientId ?? ""
         guard !deviceId.isEmpty else { return }
+        self.deviceId = deviceId
         let token = (payload["token"] as? String) ?? handshakeToken ?? ""
         let device = KnownDevice(
             id: deviceId,
@@ -637,6 +1014,55 @@ final class GoonDropClient: NSObject, ObservableObject {
 
     // MARK: - Parsers
 
+    /// Fold a launcher-reported snapshot into the published state, keeping the
+    /// optimistic play/pause flag honest once the real answer arrives.
+    private func applyMediaState(_ dict: [String: Any]) {
+        guard let available = dict["available"] as? Bool, available else {
+            mediaState = .unknown
+            mediaPendingCommand = false
+            return
+        }
+        mediaState = GoonMediaState(
+            available: true,
+            playing: dict["playing"] as? Bool ?? false,
+            title: dict["title"] as? String ?? "",
+            appName: dict["appName"] as? String ?? "",
+            volume: (dict["volume"] as? NSNumber)?.doubleValue ?? -1,
+            volumeMuted: dict["volumeMuted"] as? Bool ?? false,
+            micMuted: dict["micMuted"] as? Bool ?? false,
+            micVolume: (dict["micVolume"] as? NSNumber)?.doubleValue ?? -1,
+            updatedAt: (dict["updatedAt"] as? NSNumber)?.intValue ?? now()
+        )
+        mediaPendingCommand = false
+    }
+
+    private func parseChat(_ list: [[String: Any]]) -> [GoonChatMessage] {
+        let key = SharedConfig.shared.encryptionKey
+        return list.compactMap { dict in
+            guard let raw = dict["text"] as? String, !raw.isEmpty else { return nil }
+            return GoonChatMessage(
+                text: E2EECipher.decrypt(raw, key: key),
+                timestamp: dict["timestamp"] as? Int ?? now(),
+                sourceDeviceId: dict["sourceDeviceId"] as? String ?? "",
+                sourceDeviceName: dict["sourceDeviceName"] as? String ?? "Device"
+            )
+        }
+    }
+
+    private func appendChat(_ dict: [String: Any]) {
+        guard let raw = dict["text"] as? String, !raw.isEmpty else { return }
+        let message = GoonChatMessage(
+            text: E2EECipher.decrypt(raw, key: SharedConfig.shared.encryptionKey),
+            timestamp: dict["timestamp"] as? Int ?? now(),
+            sourceDeviceId: dict["sourceDeviceId"] as? String ?? "",
+            sourceDeviceName: dict["sourceDeviceName"] as? String ?? "Device"
+        )
+        if let last = chatMessages.last, last.text == message.text,
+           last.sourceDeviceId == message.sourceDeviceId { return }
+        chatMessages.append(message)
+        trimChat()
+    }
+
     private func parseDevices(_ list: [[String: Any]]) -> [GoonDevice] {
         list.compactMap { dict in
             guard let id = dict["id"] as? String else { return nil }
@@ -652,9 +1078,12 @@ final class GoonDropClient: NSObject, ObservableObject {
     }
 
     private func parseClips(_ list: [[String: Any]]) -> [GoonClipboard] {
-        list.compactMap { dict in
-            guard let text = dict["text"] as? String else { return nil }
-            return makeClip(dict, text: text)
+        // The web client encrypts clipboard text before it goes on the wire, so
+        // history arriving from the server is ciphertext when a passcode is set.
+        let key = SharedConfig.shared.encryptionKey
+        return list.compactMap { dict in
+            guard let raw = dict["text"] as? String else { return nil }
+            return makeClip(dict, text: E2EECipher.decrypt(raw, key: key))
         }
     }
 
@@ -696,10 +1125,11 @@ final class GoonDropClient: NSObject, ObservableObject {
     }
 
     private func prependLink(from dict: [String: Any]) {
-        guard let url = dict["url"] as? String else { return }
+        guard let url = dict["url"] as? String, !url.isEmpty else { return }
+        let title = dict["title"] as? String
         let item = GoonLink(
             url: url,
-            title: dict["title"] as? String ?? url,
+            title: (title?.isEmpty == false) ? title! : url,
             timestamp: dict["timestamp"] as? Int ?? now(),
             sourceDeviceName: dict["sourceDeviceName"] as? String ?? "PC"
         )

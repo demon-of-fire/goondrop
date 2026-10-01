@@ -14,7 +14,8 @@ import { generateId as genId, hashText, getMachineName } from './utils';
 import { buildShortcutPlist, getShortcutDefinitions, SHORTCUT_CATEGORIES } from './shortcuts';
 
 import type { PairingManager } from './pairing';
-export function createServer(config: AppConfig, fileTransfer: FileTransferManager, clipboardManager: ClipboardManager, pairingManager: PairingManager, pushManager: any): Express {
+import type { MediaController } from './media';
+export function createServer(config: AppConfig, fileTransfer: FileTransferManager, clipboardManager: ClipboardManager, pairingManager: PairingManager, pushManager: any, mediaController?: MediaController): Express {
   const app = express();
 
   app.use(express.json({ limit: '50mb' }));
@@ -245,6 +246,13 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
 
     const contentType = req.header('content-type') || '';
 
+    // A phone that knows its paired id tells us who is really sending, so the
+    // receiving side does not have to guess between "iPhone" and a device name.
+    const claimedDeviceName = String(req.header('x-goondrop-device') || '').trim().slice(0, 80);
+    const claimedDeviceId = String(req.header('x-goondrop-device-id') || '').trim().slice(0, 100);
+    const sourceName = claimedDeviceName || 'iPhone';
+    const sourceId = claimedDeviceId || 'shortcut-ios';
+
     if (contentType.includes('multipart/form-data')) {
       const bb = busboy({ headers: req.headers, limits: { fileSize: config.maxFileSize } });
       const uploadedFiles: Array<{ fileId: string; fileName: string; filePath: string; size: number }> = [];
@@ -288,8 +296,8 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
               fileName: uf.fileName,
               fileSize: uf.size,
               mimeType: 'application/octet-stream',
-              sourceDeviceId: 'shortcut-ios',
-              sourceDeviceName: 'iPhone',
+              sourceDeviceId: sourceId,
+              sourceDeviceName: sourceName,
               downloadUrl: `/api/files/${uf.fileId}/${encodeURIComponent(uf.fileName)}`
             },
             id: genId(),
@@ -354,7 +362,7 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
             payload: {
               fileId, fileName: finalName, fileSize: received,
               mimeType: 'application/octet-stream',
-              sourceDeviceId: 'shortcut-ios', sourceDeviceName: 'iPhone',
+              sourceDeviceId: sourceId, sourceDeviceName: sourceName,
               downloadUrl: `/api/files/${fileId}/${encodeURIComponent(finalName)}`
             },
             id: genId(), timestamp: Date.now()
@@ -398,8 +406,8 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
             fileName: finalName,
             fileSize: bytes,
             mimeType: 'application/octet-stream',
-            sourceDeviceId: 'shortcut-ios',
-            sourceDeviceName: 'iPhone',
+            sourceDeviceId: sourceId,
+            sourceDeviceName: sourceName,
             downloadUrl: `/api/files/${fileId}/${encodeURIComponent(finalName)}`
           },
           id: genId(),
@@ -421,8 +429,8 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     const text = (req.body && typeof req.body === 'object' ? req.body.text : req.body) || '';
     if (text && typeof text === 'string') {
       clipboardManager.handleClipboardPush({
-        id: 'shortcut-ios',
-        name: 'iPhone',
+        id: sourceId,
+        name: sourceName,
         deviceType: 'iphone',
         paired: true,
         token: '',
@@ -842,6 +850,19 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     res.json({ success: true, message: 'Your PC is making noise right now!' });
   });
 
+  /**
+   * Real playback + mute state read from the Windows launcher. The iOS app uses
+   * this over HTTP as a fallback when the WebSocket is not up yet, so the
+   * play/pause button and mic toggle are never showing a stale guess.
+   */
+  app.get('/api/media/state', (_req: Request, res: Response) => {
+    if (!mediaController) {
+      res.status(503).json({ available: false, error: 'media state unavailable' });
+      return;
+    }
+    res.json(mediaController.getState());
+  });
+
   /** Shortcuts metadata & installation guide endpoint (catalog-driven) */
   app.get('/api/shortcuts/suite', (_req: Request, res: Response) => {
     const baseUrl = `http://${config.localIp}:${config.port}`;
@@ -1127,23 +1148,15 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
   app.post('/api/internal/clipboard', (req: Request, res: Response) => {
     const { text } = req.body;
     if (text) {
-      const snippet = (typeof text === 'string' && text.length > 80) ? text.substring(0, 78) + '…' : text;
-      fileTransfer.getConnManager().broadcastToPaired({
-        type: 'clipboard_push',
-        payload: { text, hash: hashText(text), type: 'text', sourceDeviceName: 'Windows PC' },
-        id: genId(),
-        timestamp: Date.now()
-      });
-      // 🔔 Forward to the iPhone even when the PWA is closed (Web Push with a
-      // Copy action — taps open the app with the text ready to grab).
-      pushManager.broadcastNotification(
-        '📋 Clipboard from PC',
-        `"${snippet}" — tap to copy`,
-        [
-          { label: 'Copy to iPhone', value: 'clip_copy' },
-          { label: 'Ignore', value: 'clip_ignore' }
-        ]
-      ).catch(() => {});
+      // Route launcher text through the clipboard manager rather than only
+      // broadcasting it. That records it in history, so an iPhone that briefly
+      // disconnects still receives the latest text on its next connection.
+      clipboardManager.handleClipboardPush({
+        id: 'local-windows-pc',
+        name: 'Windows PC',
+        deviceType: 'windows',
+        paired: true,
+      } as any, { text, hash: hashText(text), type: 'text' });
     }
     res.sendStatus(200);
   });

@@ -350,7 +350,8 @@ export class PairingManager {
       payload: {
         checklist: this.currentChecklist,
         links: this.recentLinks,
-        clipboardHistory: this.getClipboardHistory()
+        clipboardHistory: this.getClipboardHistory(),
+        chatHistory: this.getChatHistory()
       },
       id: generateId(),
       timestamp: Date.now()
