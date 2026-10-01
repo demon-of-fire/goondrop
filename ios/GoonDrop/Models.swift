@@ -36,6 +36,28 @@ struct GoonLink: Identifiable, Equatable {
     var id: String { url }
 }
 
+/// A file offered to or received by this iPhone from the paired Windows PC.
+struct IncomingFile: Identifiable, Equatable {
+    let id: String
+    let fileName: String
+    let fileSize: Int64
+    let mimeType: String
+    let sourceDeviceName: String
+    var status: Status
+    var downloadURL: URL?
+    var localURL: URL?
+    var errorMessage: String?
+
+    enum Status: String, Equatable {
+        case offered
+        case waitingForFile
+        case downloading
+        case ready
+        case declined
+        case failed
+    }
+}
+
 /// A Goon Drop server (Windows PC) discovered on the local Wi-Fi network.
 struct DiscoveredServer: Codable, Identifiable, Equatable {
     let ip: String

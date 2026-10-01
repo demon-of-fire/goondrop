@@ -21,6 +21,7 @@ final class GoonDropClient: NSObject, ObservableObject {
     @Published var clipboardItems: [GoonClipboard] = []
     @Published var links: [GoonLink] = []
     @Published var transfers: [FileTransferOut] = []
+    @Published var incomingFiles: [IncomingFile] = []
     @Published var statusMessage: String?
     @Published var lastError: String?
 
@@ -535,6 +536,18 @@ final class GoonDropClient: NSObject, ObservableObject {
         case "link_send":
             if let p = payload as? [String: Any] { prependLink(from: p) }
 
+        case "file_meta":
+            if let p = payload as? [String: Any] { registerIncomingFile(p) }
+
+        case "file_complete":
+            if let p = payload as? [String: Any] { completeIncomingFile(p) }
+
+        case "file_cancel":
+            if let p = payload as? [String: Any], let id = p["fileId"] as? String,
+               let index = incomingFiles.firstIndex(where: { $0.id == id }) {
+                incomingFiles[index].status = .declined
+            }
+
         case "pairing_pending":
             isPairing = false
             statusMessage = "Waiting for approval on another device…"
@@ -674,6 +687,86 @@ final class GoonDropClient: NSObject, ObservableObject {
         )
         links.insert(item, at: 0)
         if links.count > 50 { links.removeLast(links.count - 50) }
+    }
+
+    // MARK: - Incoming files
+
+    private func registerIncomingFile(_ payload: [String: Any]) {
+        guard let id = payload["fileId"] as? String,
+              let name = payload["fileName"] as? String,
+              !id.isEmpty, !name.isEmpty else { return }
+        guard incomingFiles.firstIndex(where: { $0.id == id }) == nil else { return }
+        let size = (payload["fileSize"] as? NSNumber)?.int64Value ?? 0
+        incomingFiles.insert(IncomingFile(
+            id: id,
+            fileName: name,
+            fileSize: size,
+            mimeType: payload["mimeType"] as? String ?? "application/octet-stream",
+            sourceDeviceName: payload["sourceDeviceName"] as? String ?? "Windows PC",
+            status: .offered,
+            downloadURL: nil,
+            localURL: nil,
+            errorMessage: nil
+        ), at: 0)
+        statusMessage = "\(name) is ready to accept"
+    }
+
+    private func completeIncomingFile(_ payload: [String: Any]) {
+        guard let id = payload["fileId"] as? String,
+              let relativeURL = payload["downloadUrl"] as? String,
+              let url = URL(string: relativeURL, relativeTo: URL(string: SharedConfig.shared.baseURLString))?.absoluteURL,
+              let index = incomingFiles.firstIndex(where: { $0.id == id }) else { return }
+        incomingFiles[index].downloadURL = url
+        incomingFiles[index].status = .waitingForFile
+        statusMessage = "\(incomingFiles[index].fileName) is ready to download"
+    }
+
+    func acceptIncomingFile(_ file: IncomingFile) {
+        guard file.status == .offered else { return }
+        if let index = incomingFiles.firstIndex(where: { $0.id == file.id }) {
+            incomingFiles[index].status = .waitingForFile
+        }
+        sendJSON(envelope("file_accept", ["fileId": file.id]))
+    }
+
+    func declineIncomingFile(_ file: IncomingFile) {
+        if let index = incomingFiles.firstIndex(where: { $0.id == file.id }) {
+            incomingFiles[index].status = .declined
+        }
+        sendJSON(envelope("file_decline", ["fileId": file.id]))
+    }
+
+    func downloadIncomingFile(_ file: IncomingFile) {
+        guard let remoteURL = file.downloadURL,
+              let index = incomingFiles.firstIndex(where: { $0.id == file.id }) else { return }
+        incomingFiles[index].status = .downloading
+        Task {
+            do {
+                let (data, response) = try await SharedConfig.makeLANSession().data(from: remoteURL)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let directory = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
+                                                            appropriateFor: nil, create: true)
+                    .appendingPathComponent("GoonDrop Received", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let safeName = file.fileName.replacingOccurrences(of: "/", with: "_")
+                let destination = directory.appendingPathComponent(safeName)
+                try? FileManager.default.removeItem(at: destination)
+                try data.write(to: destination, options: .atomic)
+                if let updated = incomingFiles.firstIndex(where: { $0.id == file.id }) {
+                    incomingFiles[updated].localURL = destination
+                    incomingFiles[updated].status = .ready
+                    statusMessage = "Saved \(file.fileName) in GoonDrop Received"
+                }
+            } catch {
+                if let updated = incomingFiles.firstIndex(where: { $0.id == file.id }) {
+                    incomingFiles[updated].status = .failed
+                    incomingFiles[updated].errorMessage = error.localizedDescription
+                }
+                lastError = "Could not download \(file.fileName)"
+            }
+        }
     }
 
     // MARK: - Transport helpers

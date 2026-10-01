@@ -21,6 +21,10 @@ struct ContentView: View {
                     .tabItem { Label("Send", systemImage: "paperplane.fill") }
                     .tag(1)
 
+                ReceiveView()
+                    .tabItem { Label("Receive", systemImage: "tray.and.arrow.down.fill") }
+                    .tag(5)
+
                 ClipboardView()
                     .tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
                     .tag(2)
