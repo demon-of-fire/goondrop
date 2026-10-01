@@ -8,11 +8,17 @@ struct ReceiveView: View {
         NavigationStack {
             Group {
                 if client.incomingFiles.isEmpty {
-                    ContentUnavailableView(
-                        "No incoming files",
-                        systemImage: "tray.and.arrow.down",
-                        description: Text("Files sent from the Windows launcher will appear here. Keep Goon Drop connected, then tap Accept.")
-                    )
+                    VStack(spacing: 12) {
+                        Image(systemName: "tray.and.arrow.down")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.secondary)
+                        Text("No incoming files").font(.headline)
+                        Text("Files sent from the Windows launcher will appear here. Keep Goon Drop connected, then tap Accept.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(32)
                 } else {
                     List {
                         ForEach(client.incomingFiles) { file in
