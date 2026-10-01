@@ -37,8 +37,10 @@ struct MediaView: View {
 
             nowPlayingSection
 
-            Section("Microphone") {
+            Section {
                 micToggle
+            } header: {
+                Text("Microphone")
             } footer: {
                 Text("Mutes the microphone on your PC. Your iPhone plays a sound so you can confirm the change without being able to hear the PC.")
             }
@@ -109,7 +111,7 @@ struct MediaView: View {
                     } else if state.available {
                         Text("updated \(Self.relativeTime(state.updatedAt))")
                             .font(.caption2)
-                            .foregroundColor(.tertiary)
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -164,7 +166,7 @@ struct MediaView: View {
 
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.caption)
-                    .foregroundColor(.tertiary)
+                    .foregroundStyle(.tertiary)
             }
             .contentShape(Rectangle())
         }

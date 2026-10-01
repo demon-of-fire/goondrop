@@ -642,7 +642,7 @@ final class GoonDropClient: NSObject, ObservableObject {
             row["text"] = E2EECipher.encrypt(item.text, key: key)
             return row
         }
-        sendJSON(envelope("checklist_update", payload))
+        sendJSON(envelope("checklist_update", arrayPayload: payload))
         statusMessage = "Checklist updated"
     }
 
@@ -1233,6 +1233,12 @@ final class GoonDropClient: NSObject, ObservableObject {
 
     private func envelope(_ type: String, _ payload: [String: Any]) -> [String: Any] {
         ["type": type, "payload": payload, "id": UUID().uuidString, "timestamp": now()]
+    }
+
+    /// The web client sends the checklist as a bare array rather than an object,
+    /// so this variant is needed to keep the payload type honest.
+    private func envelope(_ type: String, arrayPayload: [[String: Any]]) -> [String: Any] {
+        ["type": type, "payload": arrayPayload, "id": UUID().uuidString, "timestamp": now()]
     }
 
     private func now() -> Int {

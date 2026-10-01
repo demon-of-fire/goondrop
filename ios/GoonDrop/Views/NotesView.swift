@@ -87,13 +87,15 @@ struct NotesView: View {
                 }
             }
 
-            Section("Danger zone") {
+            Section {
                 Button(role: .destructive) {
                     confirmWipe = true
                 } label: {
                     Label("Wipe everything on all devices", systemImage: "exclamationmark.triangle.fill")
                 }
                 .disabled(!client.isConnected)
+            } header: {
+                Text("Danger zone")
             } footer: {
                 Text("Clears the clipboard history, chat, notes and checklist on your PC and on every paired device. Files on disk are not touched.")
             }
