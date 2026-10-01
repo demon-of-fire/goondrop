@@ -516,11 +516,20 @@ final class GoonDropClient: NSObject, ObservableObject {
 
         case "clipboard_push":
             if let p = payload as? [String: Any], let text = p["text"] as? String {
-                prependClip(from: p, text: text)
+                receiveClipboard(from: p, text: text)
             }
 
         case "clipboard_history":
-            if let clips = payload as? [[String: Any]] { clipboardItems = parseClips(clips) }
+            if let clips = payload as? [[String: Any]] {
+                clipboardItems = parseClips(clips)
+                // The server's history is newest-first. Replaying the current
+                // clipboard after reconnect makes a missed launcher send useful
+                // instead of leaving it trapped in this screen.
+                if let newest = clips.first, let text = newest["text"] as? String, !text.isEmpty {
+                    UIPasteboard.general.string = text
+                    statusMessage = "Latest PC text copied to your clipboard"
+                }
+            }
 
         case "clipboard_pinned":
             if let p = payload as? [String: Any], let hash = p["hash"] as? String {
@@ -675,6 +684,15 @@ final class GoonDropClient: NSObject, ObservableObject {
     private func prependClip(from dict: [String: Any], text: String) {
         if let first = clipboardItems.first, first.text == text { return }
         clipboardItems.insert(makeClip(dict, text: text), at: 0)
+    }
+
+    private func receiveClipboard(from dict: [String: Any], text: String) {
+        prependClip(from: dict, text: text)
+        // Unlike the web PWA, the native app can update UIPasteboard directly.
+        // This is the expected continuity behavior: launcher text is immediately
+        // available to paste anywhere on the phone while Goon Drop is active.
+        UIPasteboard.general.string = text
+        statusMessage = "Text copied to your iPhone clipboard"
     }
 
     private func prependLink(from dict: [String: Any]) {
