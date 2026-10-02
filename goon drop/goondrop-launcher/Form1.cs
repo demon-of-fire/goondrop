@@ -170,6 +170,7 @@ public partial class Form1 : Form
         CheckNodeJs();
         StartLocalListener();
         StartUdpMouseListener();
+        ListenForShowRequests();
         
         // Auto-start server on launch
         BtnStart_Click(null, EventArgs.Empty);
@@ -791,6 +792,35 @@ public partial class Form1 : Form
         ShowInTaskbar = true;
         WindowState = FormWindowState.Normal;
         Activate();
+    }
+
+    // The primary instance listens for this so a second launch (Desktop
+    // shortcut, Explorer "Send To", autostart) surfaces the existing window
+    // instead of silently exiting against the single-instance mutex.
+    private void ListenForShowRequests()
+    {
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var showEvent = new EventWaitHandle(
+                    false, EventResetMode.AutoReset, @"Local\GoonDropLauncherShow");
+                while (true)
+                {
+                    showEvent.WaitOne();
+                    if (IsDisposed || Disposing) return;
+                    try
+                    {
+                        if (InvokeRequired) Invoke(ShowWindow);
+                        else ShowWindow();
+                    }
+                    catch { /* window went away mid-signal */ }
+                }
+            }
+            catch { }
+        })
+        { IsBackground = true, Name = "GoonDropShowListener" };
+        thread.Start();
     }
 
     private Icon CreateApplicationIcon()
