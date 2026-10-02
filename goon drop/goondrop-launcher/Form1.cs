@@ -38,6 +38,14 @@ public partial class Form1 : Form
     private CheckBox chkStartMinimized = null!;
     private System.Windows.Forms.Timer pollTimer = null!;
 
+    // Send-to-iPhone controls
+    private TextBox txtSendText = null!;
+    private Button btnSendText = null!;
+    private Button btnBrowseFiles = null!;
+    private Button btnSendFile = null!;
+    private Label lblSelectedFile = null!;
+    private string selectedFilePath = "";
+
     // Integration Controls (System Tray & Startup)
     private NotifyIcon notifyIcon = null!;
     private ContextMenuStrip trayMenu = null!;
@@ -189,7 +197,7 @@ public partial class Form1 : Form
     private void SetupUI()
     {
         Text = "Goon Drop Server Control";
-        Size = new Size(600, 480);
+        Size = new Size(600, 585);
         StartPosition = FormStartPosition.CenterScreen;
         MaximizeBox = false;
         FormClosing += Form1_FormClosing;
@@ -436,6 +444,84 @@ public partial class Form1 : Form
         };
         btnBrowser.Click += (_, _) => OpenBrowser(serverUrl);
 
+        // Text box for sending text to iPhone clipboard
+        txtSendText = new TextBox
+        {
+            Location = new Point(20, 465),
+            Size = new Size(540, 28),
+            BackColor = Color.FromArgb(10, 10, 10),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 10),
+            BorderStyle = BorderStyle.FixedSingle,
+            Text = "Type or paste text here...",
+            TabIndex = 1,
+            AccessibleName = "Text to Send",
+            AccessibleDescription = "Type or paste text to send to the paired iPhone clipboard"
+        };
+
+        // Browse Files button with mnemonic
+        btnBrowseFiles = new Button
+        {
+            Text = "&Browse Files...",
+            Location = new Point(20, 425),
+            Size = new Size(130, 30),
+            BackColor = Color.FromArgb(40, 40, 40),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9, FontStyle.Bold),
+            FlatStyle = FlatStyle.Flat,
+            FlatAppearance = { BorderSize = 0 },
+            AccessibleName = "Browse Files",
+            AccessibleDescription = "Choose a file to send to paired iPhones"
+        };
+        btnBrowseFiles.Click += BtnBrowse_Click;
+
+        // Selected file display
+        lblSelectedFile = new Label
+        {
+            Text = "No file selected",
+            Location = new Point(160, 425),
+            Size = new Size(270, 30),
+            ForeColor = Color.FromArgb(200, 200, 200),
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            AccessibleName = "Selected File",
+            AccessibleDescription = "The file selected for sending to iPhone"
+        };
+
+        // Send selected file button
+        btnSendFile = new Button
+        {
+            Text = "Send File to &iPhone",
+            Location = new Point(435, 425),
+            Size = new Size(130, 30),
+            BackColor = Color.FromArgb(0, 229, 160),
+            ForeColor = Color.Black,
+            Font = new Font("Segoe UI", 8, FontStyle.Bold),
+            FlatStyle = FlatStyle.Flat,
+            FlatAppearance = { BorderSize = 0 },
+            Enabled = false,
+            AccessibleName = "Send File to iPhone",
+            AccessibleDescription = "Sends the selected file to paired iPhones"
+        };
+        btnSendFile.Click += BtnSendFile_Click;
+
+        // Send text button with mnemonic
+        btnSendText = new Button
+        {
+            Text = "Send to &iPhone",
+            Location = new Point(20, 500),
+            Size = new Size(130, 36),
+            BackColor = Color.FromArgb(0, 229, 160),
+            ForeColor = Color.Black,
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            FlatStyle = FlatStyle.Flat,
+            FlatAppearance = { BorderSize = 0 },
+            TabIndex = 2,
+            AccessibleName = "Send Text",
+            AccessibleDescription = "Sends typed/pasted text to paired iPhone clipboard"
+        };
+        btnSendText.Click += BtnSendText_Click;
+
         // Poll timer to fetch pairing info
         pollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         pollTimer.Tick += PollTimer_Tick;
@@ -445,6 +531,7 @@ public partial class Form1 : Form
         {
             lblTitle, lblStatus, lblUrl, lblPairing,
             txtOutput, btnStart, btnStop, btnHideToTray, btnToggleWidget, btnBrowser, btnPingPhones,
+            btnBrowseFiles, lblSelectedFile, btnSendFile, txtSendText, btnSendText,
             chkAutoStart, chkStartMinimized
         });
 
@@ -616,6 +703,11 @@ public partial class Form1 : Form
             btnStop.Visible = false;
             btnHideToTray.Visible = false;
             btnBrowser.Visible = false;
+            btnBrowseFiles.Visible = false;
+            lblSelectedFile.Visible = false;
+            btnSendFile.Visible = false;
+            txtSendText.Visible = false;
+            btnSendText.Visible = false;
             chkAutoStart.Visible = false;
             chkStartMinimized.Visible = false;
             btnToggleWidget.Text = "&Normal UI";
@@ -642,6 +734,11 @@ public partial class Form1 : Form
             btnStop.Visible = true;
             btnHideToTray.Visible = true;
             btnBrowser.Visible = true;
+            btnBrowseFiles.Visible = true;
+            lblSelectedFile.Visible = true;
+            btnSendFile.Visible = true;
+            txtSendText.Visible = true;
+            btnSendText.Visible = true;
             chkAutoStart.Visible = true;
             chkStartMinimized.Visible = true;
             btnToggleWidget.Text = "&Widget Mode";
@@ -880,6 +977,73 @@ public partial class Form1 : Form
     private void BtnStop_Click(object? sender, EventArgs e)
     {
         StopServer();
+    }
+
+    private async void BtnSendText_Click(object? sender, EventArgs e)
+    {
+        var text = txtSendText.Text.Trim();
+        if (string.IsNullOrEmpty(text) || text == "Type or paste text here...")
+            return;
+
+        try
+        {
+            using var client = new System.Net.Http.HttpClient();
+            var json = System.Text.Json.JsonSerializer.Serialize(new { text });
+            var resp = await client.PostAsync(
+                $"{serverUrl}/api/internal/clipboard",
+                new System.Net.Http.StringContent(json, Encoding.UTF8, "application/json"));
+
+            if (resp.IsSuccessStatusCode)
+            {
+                Log("Sent text to paired iPhone(s).");
+                notifyIcon.ShowBalloonTip(3000, "Goon Drop", "Text sent to paired iPhone(s).", ToolTipIcon.Info);
+                txtSendText.Clear();
+            }
+            else
+            {
+                MessageBox.Show("Goon Drop rejected the text. Make sure the server is running.",
+                    "Goon Drop Error", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Send text failed: {ex.Message}");
+            MessageBox.Show("Could not connect to Goon Drop. Make sure the server is running.",
+                "Goon Drop Not Running", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+        }
+    }
+
+    private void BtnBrowse_Click(object? sender, EventArgs e)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Choose a file to send to your iPhone",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            selectedFilePath = dlg.FileName;
+            lblSelectedFile.Text = Path.GetFileName(selectedFilePath);
+            lblSelectedFile.ForeColor = Color.FromArgb(0, 229, 160);
+            btnSendFile.Enabled = true;
+        }
+    }
+
+    private void BtnSendFile_Click(object? sender, EventArgs e)
+    {
+        if (!File.Exists(selectedFilePath))
+        {
+            MessageBox.Show("Choose a file first.", "Goon Drop", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+            return;
+        }
+
+        SendFileNatively(selectedFilePath);
+        selectedFilePath = "";
+        lblSelectedFile.Text = "No file selected";
+        lblSelectedFile.ForeColor = Color.FromArgb(200, 200, 200);
+        btnSendFile.Enabled = false;
     }
 
     private void StopServer()

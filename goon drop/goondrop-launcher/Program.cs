@@ -1,12 +1,19 @@
 using System;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace GoonDropLauncher;
 
 static class Program
 {
+    // Held for the lifetime of the process. Without this, every autostart,
+    // double-click and self-update copy leaves another launcher running; only
+    // one can own the 3945 control port, so the rest are silent ghosts that
+    // serve stale media state to the phone.
+    private static Mutex? _singleInstance;
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -51,8 +58,32 @@ static class Program
 return; // Exit immediately, do not start a new server instance
         }
 
+        // Second instance: the tray icon already exists, so bring it forward
+        // rather than starting a competing server and control-port owner.
+        _singleInstance = new Mutex(initiallyOwned: true, @"Local\GoonDropLauncherSingleton", out bool isFirst);
+        if (!isFirst)
+        {
+            NotifyExistingInstance();
+            _singleInstance.Dispose();
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
         Application.Run(new Form1());
+        _singleInstance.ReleaseMutex();
+        _singleInstance.Dispose();
+    }
+
+    /// Ask an already-running launcher to surface itself. A named event is the
+    /// cheapest signal available without pulling in IPC plumbing.
+    static void NotifyExistingInstance()
+    {
+        try
+        {
+            using var ready = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\GoonDropLauncherShow");
+            ready.Set();
+        }
+        catch { }
     }
 
     // Locate goondrop-port.txt next to the exe or in the project root (works
