@@ -274,10 +274,14 @@ final class GoonDropClient: NSObject, ObservableObject {
         }
         if isConnected {
             // AppContext encrypts both url and title before sending link_send.
+            // The server holds no room passcode, so it cannot decrypt those; it
+            // needs a cleartext copy to actually open the link in the PC browser.
+            // pcUrl is used only to launch locally and is never stored or relayed.
             let key = SharedConfig.shared.encryptionKey
             sendJSON(envelope("link_send",
                               ["url": E2EECipher.encrypt(trimmed, key: key),
-                               "title": E2EECipher.encrypt(trimmed, key: key)]))
+                               "title": E2EECipher.encrypt(trimmed, key: key),
+                               "pcUrl": trimmed]))
             statusMessage = "Opened on PC browser"
         } else {
             postLink(trimmed)

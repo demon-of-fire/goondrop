@@ -102,8 +102,15 @@ async function main(): Promise<void> {
 
   // Link handoff broadcaster
   connManager.on('link_send', (client, payload: any) => {
-    console.log(`[NOTIFY] Link received from ${client.name}: ${payload.url}`);
-    
+    console.log(`[NOTIFY] Link received from ${client.name}`);
+
+    // payload.url is E2EE ciphertext so other devices can decrypt it with the
+    // shared room passcode. The server holds no passcode, so a ciphertext value
+    // cannot be opened on the PC. Clients therefore also send `pcUrl` in
+    // cleartext purely for local browser launch; it is never stored or relayed.
+    const openTarget = String(payload.pcUrl || '').trim();
+    const isOpenable = openTarget.startsWith('http://') || openTarget.startsWith('https://');
+
     const linkItem = {
       url: payload.url,
       title: payload.title || '',
@@ -119,7 +126,14 @@ async function main(): Promise<void> {
       timestamp: Date.now(),
     }, client.id);
 
-    sendLocalControlCommand({ type: 'open_url', url: payload.url });
+    if (isOpenable) {
+      sendLocalControlCommand({ type: 'open_url', url: openTarget });
+      // Backstop: if the native launcher is not running, open it here so the
+      // handoff still lands instead of failing silently.
+      openUrlLocally(openTarget);
+    } else {
+      console.log('[NOTIFY] Handoff link is encrypted or not openable; skipped PC launch.');
+    }
   });
 
   // Text note broadcaster
@@ -193,6 +207,21 @@ async function main(): Promise<void> {
       req.write(data);
       req.end();
     } catch { }
+  };
+
+  /**
+   * Open a URL in the PC's default browser straight from the server process.
+   * Used as a fallback when the native launcher is not listening on 3945.
+   */
+  const openUrlLocally = (url: string) => {
+    try {
+      const { exec } = require('child_process');
+      const safe = url.replace(/'/g, "''");
+      exec(`powershell.exe -NoProfile -WindowStyle Hidden -command "Start-Process '${safe}'"`,
+        { windowsHide: true }, () => {});
+    } catch (err: any) {
+      console.error('[NOTIFY] Could not open URL locally:', err?.message);
+    }
   };
 
   // Native Windows remote mouse tracking over high-speed UDP!

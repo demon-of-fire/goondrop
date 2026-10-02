@@ -1886,6 +1886,21 @@ public partial class Form1 : Form
                                         try { Process.Start("shutdown.exe", "/r /t 3 /c \"Goon Drop: restart from your iPhone\""); } catch { }
                                     } else if (data.type == "update_pc") {
                                         try { Process.Start("cmd.exe", "/c start ms-settings:windowsupdate-action"); } catch { }
+                                    } else if (data.type == "open_url") {
+                                        // Browser handoff. Only ever act on real web
+                                        // URLs; a mis-routed local path or an
+                                        // E2EE ciphertext blob must not be launched.
+                                        var handoffUrl = (data.url ?? "").Trim();
+                                        if (handoffUrl.StartsWith("http://") || handoffUrl.StartsWith("https://"))
+                                        {
+                                            OpenBrowser(handoffUrl);
+                                            Log($"Handoff from iPhone: {handoffUrl}");
+                                            try { notifyIcon.ShowBalloonTip(3000, "Goon Drop", "Opening link on your PC...", ToolTipIcon.Info); } catch { }
+                                        }
+                                        else
+                                        {
+                                            Log($"Ignored open_url with unsupported value: {handoffUrl}");
+                                        }
                                     } else if (data.type == "ping_pc") {
                                         // 🔍 Find My PC — loud audible beeps + tray balloon so you can locate your machine!
                                         try {
@@ -2006,6 +2021,7 @@ public partial class Form1 : Form
         public int dy { get; set; }
         public string clickType { get; set; } = "";
         public string command { get; set; } = "";
+        public string url { get; set; } = "";
     }
 
     private class PromptPacket
