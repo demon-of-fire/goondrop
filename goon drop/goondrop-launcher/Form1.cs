@@ -428,10 +428,11 @@ public partial class Form1 : Form
             } catch { }
         };
 
-        // Browser link button with mnemonic
+        // Brings the control panel forward. The web UI was removed, so this used
+        // to be "Open Web UI" and opened the PWA in a browser.
         btnBrowser = new Button
         {
-            Text = "&Web UI",
+            Text = "&Panel",
             Location = new Point(480, 15),
             Size = new Size(85, 30),
             BackColor = Color.FromArgb(30, 30, 30),
@@ -440,10 +441,10 @@ public partial class Form1 : Form
             FlatStyle = FlatStyle.Flat,
             FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(0, 229, 160) },
             TabIndex = 6,
-            AccessibleName = "Open Web UI",
-            AccessibleDescription = "Opens the Goon Drop web interface in your default browser"
+            AccessibleName = "Show Control Panel",
+            AccessibleDescription = "Brings the Goon Drop control panel window to the front"
         };
-        btnBrowser.Click += (_, _) => OpenBrowser(serverUrl);
+        btnBrowser.Click += (_, _) => ShowWindow();
 
         // Text box for sending text to iPhone clipboard
         txtSendText = new TextBox
@@ -560,10 +561,10 @@ public partial class Form1 : Form
             Visible = true
         };
 
-        notifyIcon.DoubleClick += (s, e) => OpenBrowser(serverUrl);
-        
-        // Native Balloon Tip Click Handler -> instantly opens the Web Client!
-        notifyIcon.BalloonTipClicked += (s, e) => OpenBrowser(serverUrl);
+        notifyIcon.DoubleClick += (s, e) => ShowWindow();
+
+        // Native Balloon Tip Click Handler -> surfaces the control panel.
+        notifyIcon.BalloonTipClicked += (s, e) => ShowWindow();
     }
 
     private void TrayMenu_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -580,12 +581,10 @@ public partial class Form1 : Form
         menuOpen.Font = new Font(trayMenu.Font, FontStyle.Bold);
         menuOpen.AccessibleDescription = "Shows the Goon Drop control panel window";
 
-        var menuWeb = new ToolStripMenuItem("Open &Web Client", null, (s, e) => OpenBrowser(serverUrl));
-        menuWeb.AccessibleDescription = "Opens the Goon Drop web interface in your default browser";
-        
+        // "Open Control Panel" already surfaces the window, which is what the
+        // old "Open Web Client" entry did once the PWA was removed.
         trayMenu.Items.AddRange(new ToolStripItem[] {
             menuOpen,
-            menuWeb,
             new ToolStripSeparator()
         });
 
@@ -1533,7 +1532,7 @@ public partial class Form1 : Form
         {
             if (m.WParam.ToInt32() == HOTKEY_ID)
             {
-                OpenBrowser(serverUrl);
+                ShowWindow();
             }
         }
         base.WndProc(ref m);

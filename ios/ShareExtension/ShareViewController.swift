@@ -549,14 +549,22 @@ final class ShareViewController: UIViewController {
 
     private func deliver(_ payload: Payload, item: SharedItem, completion: @escaping (Bool, String?) -> Void) {
         guard let target = target else { completion(false, "No PC"); return }
-        // Match the app and the web client: when a room passcode is set, shared
-        // text and links go out encrypted so every device reads them the same way.
         let key = SharedConfig.shared.encryptionKey
         switch payload {
         case .url(let url):
-            postJSON(target, "/api/handoff", ["url": E2EECipher.encrypt(url.absoluteString, key: key)], completion)
+            // Like the app's link_send, the URL goes out encrypted so paired
+            // devices can decrypt it with the room passcode. The server holds no
+            // passcode and cannot decrypt, so it also needs a cleartext copy to
+            // open the link in the PC browser. pcUrl is used only for the local
+            // launch and is never stored or relayed.
+            postJSON(target, "/api/handoff",
+                     ["url": E2EECipher.encrypt(url.absoluteString, key: key),
+                      "pcUrl": url.absoluteString], completion)
         case .text(let text):
-            postJSON(target, "/api/clipboard", ["text": E2EECipher.encrypt(text, key: key)], completion)
+            // /api/clipboard writes straight to the real Windows clipboard, so it
+            // has to arrive as plaintext — the server holds no passcode and cannot
+            // decrypt. This matches the app's clipboard_push and the web client.
+            postJSON(target, "/api/clipboard", ["text": text], completion)
         case .file(let data, let name, let mime):
             postMultipart(target, data: data, fileName: name, mimeType: mime, completion)
         }

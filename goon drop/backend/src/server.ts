@@ -1,4 +1,4 @@
-/** Express server setup - serves API endpoints and static frontend */
+/** Express server setup - API endpoints for the iPhone app and the launcher */
 import express from 'express';
 import type { Express, Request, Response } from 'express';
 import path from 'path';
@@ -594,16 +594,27 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
 
   app.post('/api/handoff', (req: Request, res: Response) => {
     let url = '';
+    let clearUrl = '';
     if (typeof req.body === 'string') {
       url = req.body.trim();
-    } else if (req.body && req.body.url) {
-      url = req.body.url.trim();
+      clearUrl = url;
+    } else if (req.body) {
+      url = String(req.body.url || '').trim();
+      clearUrl = String(req.body.pcUrl || '').trim();
     }
 
-    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-      openInBrowser(url);
-      console.log(`[NOTIFY] Handoff from iPhone: ${url}`);
-      res.json({ success: true, url });
+    // payload.url is E2EE ciphertext so paired devices can decrypt it with the
+    // shared room passcode. The server holds no passcode, so a ciphertext value
+    // cannot be opened on the PC; iOS therefore also sends `pcUrl` in cleartext
+    // purely for the local browser launch, and it is never stored or relayed.
+    // Clients without a passcode (the web PWA) only send `url`, which is then
+    // already cleartext.
+    const openTarget = clearUrl || url;
+
+    if (openTarget && (openTarget.startsWith('http://') || openTarget.startsWith('https://'))) {
+      openInBrowser(openTarget);
+      console.log(`[NOTIFY] Handoff from iPhone: ${openTarget}`);
+      res.json({ success: true, url: openTarget });
       return;
     }
     res.status(400).json({ error: 'Invalid URL for handoff' });
@@ -1421,17 +1432,9 @@ export function createServer(config: AppConfig, fileTransfer: FileTransferManage
     }
   });
 
-  // ─── Static Frontend ─────────────────────────────────────────────────────
-
-  // In production, serve built frontend
-  const frontendDist = path.resolve(__dirname, '../../frontend/dist');
-  if (fs.existsSync(frontendDist)) {
-    app.use(express.static(frontendDist));
-    // SPA fallback
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(frontendDist, 'index.html'));
-    });
-  }
+  // No static site is served any more. Goon Drop is the iPhone app plus this
+  // Windows launcher; the PWA was removed, so every route here is API-only and
+  // an unmatched path correctly falls through to Express's 404.
 
   return app;
 }
